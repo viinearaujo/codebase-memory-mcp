@@ -14,7 +14,7 @@
 
 #include "foundation/constants.h"
 
-enum { CBM_DIR_PERMS = 0755, PL_RING = 4, PL_RING_MASK = 3, PL_SEQ_PASSES = 6 };
+enum { CBM_DIR_PERMS = 0755, PL_RING = 4, PL_RING_MASK = 3, PL_SEQ_PASSES = 7 };
 #define PL_NSEC_PER_SEC 1000000000LL
 #include "pipeline/pipeline.h"
 #include "pipeline/artifact.h"
@@ -1440,6 +1440,7 @@ static int run_sequential_pipeline(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
         {cbm_pipeline_pass_definitions, "definitions", false},
         {cbm_pipeline_pass_k8s, "k8s", true},
         {seq_pass_lsp_cross_dispatch, "lsp_cross", true},
+        {cbm_pipeline_pass_uipath, "uipath", true},
         {cbm_pipeline_pass_calls, "calls", false},
         {cbm_pipeline_pass_usages, "usages", false},
         {cbm_pipeline_pass_semantic, "semantic", false},
@@ -1498,6 +1499,7 @@ static int run_sequential_pipeline(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
      * (cbm_slab_install); destroying the stale parser then frees
      * mimalloc-epoch memory through slab_free -> plain free() and libmalloc
      * aborts — the #773 second-index SIGABRT. */
+    cbm_uipath_index_free(ctx);
     cbm_destroy_thread_parser();
     /* ObjectScript: free the macro / return-type tables built for this run. */
     if (ctx->macro_table) {
@@ -1567,6 +1569,15 @@ static int run_parallel_pipeline(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
         free(cache);
         cbm_pipeline_spill_close(ctx);
         return rc != 0 ? rc : CBM_NOT_FOUND;
+    }
+    /* UiPath nodes (one synthetic Function per .xaml) are created on the main
+     * buffer before workers resume, so the watermark sync below covers them.
+     * The invoke index stays until parallel_resolve has skipped those sites. */
+    {
+        CBMFileResult **saved_cache = ctx->result_cache;
+        ctx->result_cache = cache;
+        (void)cbm_pipeline_pass_uipath(ctx, files, file_count);
+        ctx->result_cache = saved_cache;
     }
     /* Registry consumers may materialize serial nodes (Channel, EnvVar, and
      * future carrier-derived resources) after parallel extraction established
@@ -1694,6 +1705,7 @@ static int run_parallel_pipeline(cbm_pipeline_t *p, cbm_pipeline_ctx_t *ctx,
     cbm_clock_gettime(CLOCK_MONOTONIC, t);
     rc = cbm_parallel_resolve(ctx, files, file_count, cache, &shared_ids, worker_count, all_defs,
                               def_count, def_modules, module_def_index, &cross_registries);
+    cbm_uipath_index_free(ctx);
     cbm_log_info("pass.timing", "pass", "parallel_resolve", "elapsed_ms",
                  itoa_buf((int)elapsed_ms(*t)));
     pipeline_phase_mark("parallel_resolve");

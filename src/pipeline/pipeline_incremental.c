@@ -1262,6 +1262,13 @@ static int run_extract_resolve(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *changed
             return rc;
         }
 
+        {
+            CBMFileResult **saved_cache = ctx->result_cache;
+            ctx->result_cache = cache;
+            (void)cbm_pipeline_pass_uipath(ctx, changed_files, ci);
+            ctx->result_cache = saved_cache;
+        }
+
         /* Registry construction can materialize serial resource nodes after
          * extraction established the workers' shared allocator. Hand the main
          * buffer's monotonic watermark back to the workers before resolve-time
@@ -1351,6 +1358,7 @@ static int run_extract_resolve(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *changed
         rc = cbm_parallel_resolve(ctx, changed_files, ci, cache, &shared_ids, worker_count,
                                   all_defs, all_def_count, closure ? closure->def_modules : NULL,
                                   module_def_index, registries_arg);
+        cbm_uipath_index_free(ctx);
         if (module_def_index) {
             cbm_pxc_free_module_def_index(module_def_index);
         }
@@ -1387,6 +1395,12 @@ static int run_extract_resolve(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *changed
             rc = cbm_pipeline_check_cancel(ctx);
         }
         if (rc == 0) {
+            rc = cbm_pipeline_pass_uipath(ctx, changed_files, ci);
+        }
+        if (rc == 0) {
+            rc = cbm_pipeline_check_cancel(ctx);
+        }
+        if (rc == 0) {
             rc = cbm_pipeline_pass_calls(ctx, changed_files, ci);
         }
         if (rc == 0) {
@@ -1408,6 +1422,7 @@ static int run_extract_resolve(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *changed
             free_incremental_result_cache(cache, ci);
             ctx->result_cache = prior_cache;
         }
+        cbm_uipath_index_free(ctx);
         return rc;
     }
 }

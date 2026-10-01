@@ -16183,6 +16183,426 @@ TEST(pipeline_objectscript_export_range_join_keeps_one_trailing_marker) {
 }
 #endif
 
+/* Count CALLS edges. want_uipath: 1 require strategy uipath_invoke, 0 forbid it,
+ * -1 ignore. path_need, when set, must occur in the edge properties. */
+static int uip_calls(cbm_store_t *s, const char *project, const char *src_name,
+                     const char *src_file, const char *tgt_name, const char *tgt_file,
+                     int want_uipath, const char *path_need, int *payload_violations) {
+    cbm_edge_t *edges = NULL;
+    int edge_count = 0;
+    int matches = 0;
+    if (cbm_store_find_edges_by_type(s, project, "CALLS", &edges, &edge_count) != CBM_STORE_OK) {
+        return -1;
+    }
+    for (int i = 0; i < edge_count; i++) {
+        cbm_node_t source = {0};
+        cbm_node_t target = {0};
+        const char *props = edges[i].properties_json ? edges[i].properties_json : "";
+        int is_uip = strstr(props, "\"strategy\":\"uipath_invoke\"") != NULL;
+        int source_ok = cbm_store_find_node_by_id(s, edges[i].source_id, &source) == CBM_STORE_OK;
+        int target_ok = cbm_store_find_node_by_id(s, edges[i].target_id, &target) == CBM_STORE_OK;
+        int name_ok = source_ok && target_ok && source.name && target.name;
+        if (name_ok && src_name && strcmp(source.name, src_name) != 0) {
+            name_ok = 0;
+        }
+        if (name_ok && src_file && (!source.file_path || strcmp(source.file_path, src_file) != 0)) {
+            name_ok = 0;
+        }
+        if (name_ok && tgt_name && strcmp(target.name, tgt_name) != 0) {
+            name_ok = 0;
+        }
+        if (name_ok && tgt_file && (!target.file_path || strcmp(target.file_path, tgt_file) != 0)) {
+            name_ok = 0;
+        }
+        if (name_ok && want_uipath == 1 && !is_uip) {
+            name_ok = 0;
+        }
+        if (name_ok && want_uipath == 0 && is_uip) {
+            name_ok = 0;
+        }
+        if (name_ok && path_need && strstr(props, path_need) == NULL) {
+            name_ok = 0;
+        }
+        if (name_ok && is_uip && payload_violations &&
+            (strstr(props, "null") != NULL || strstr(props, "SELECTOR_SENTINEL") != NULL ||
+             strstr(props, "\"line\":") == NULL)) {
+            (*payload_violations)++;
+        }
+        if (name_ok) {
+            matches++;
+        }
+        cbm_node_free_fields(&source);
+        cbm_node_free_fields(&target);
+    }
+    if (edges) {
+        cbm_store_free_edges(edges, edge_count);
+    }
+    return matches;
+}
+
+typedef struct {
+    int run_rc;
+    bool opened;
+    int violations;
+    int other;
+    int renamed;
+    int reset_path;
+    int increment;
+    int invoices;
+    int reports;
+    int process_path;
+    int reset_member;
+    int xaml_process;
+    int xaml_renamed;
+    int xaml_other;
+    int plain;
+    int dynamic;
+    int sentinel;
+    int increment_fn;
+    int increment_qn;
+} UipathObs;
+
+static int uip_qn_count(cbm_store_t *s, const char *project, const char *name, const char *label,
+                        const char *file_path, const char *qn) {
+    cbm_node_t *nodes = NULL;
+    int count = 0;
+    int found = 0;
+    if (cbm_store_find_nodes_by_name(s, project, name, &nodes, &count) != CBM_STORE_OK) {
+        return -1;
+    }
+    for (int i = 0; i < count; i++) {
+        if (nodes[i].label && nodes[i].file_path && nodes[i].qualified_name &&
+            strcmp(nodes[i].label, label) == 0 && strcmp(nodes[i].file_path, file_path) == 0 &&
+            strcmp(nodes[i].qualified_name, qn) == 0) {
+            found++;
+        }
+    }
+    if (nodes) {
+        cbm_store_free_nodes(nodes, count);
+    }
+    return found;
+}
+
+static UipathObs uip_observe(const char *repo, const char *db_name) {
+    UipathObs obs;
+    char db_path[512];
+    cbm_pipeline_t *pipeline;
+    const char *project;
+    cbm_store_t *store;
+    memset(&obs, 0, sizeof(obs));
+    obs.run_rc = -1;
+    obs.other = -1;
+    snprintf(db_path, sizeof(db_path), "%s/%s", repo, db_name);
+    pipeline = cbm_pipeline_new(repo, db_path, CBM_MODE_FULL);
+    if (!pipeline) {
+        return obs;
+    }
+    obs.run_rc = cbm_pipeline_run(pipeline);
+    project = cbm_pipeline_project_name(pipeline);
+    store = cbm_store_open_path(db_path);
+    obs.opened = store != NULL && project != NULL;
+    if (obs.opened) {
+        obs.other = uip_calls(store, project, "RunAll", "MainFlow.cs", "Execute", "Other.cs", 1,
+                              "Other.cs", &obs.violations);
+        obs.renamed = uip_calls(store, project, "RunAll", "MainFlow.cs", "Normalize", "Renamed.cs",
+                                1, "Renamed.cs", &obs.violations);
+        obs.reset_path = uip_calls(store, project, "RunAll", "MainFlow.cs", "Execute",
+                                   "Sub/Reset.cs", 1, "Sub/Reset.cs", &obs.violations);
+        obs.increment = uip_calls(store, project, "RunAll", "MainFlow.cs", "Increment",
+                                  "Increment.xaml", 1, "Increment.xaml", &obs.violations);
+        obs.invoices = uip_calls(store, project, "RunAll", "MainFlow.cs", "Execute",
+                                 "Invoices/Parse.cs", 1, "Invoices/Parse.cs", &obs.violations);
+        obs.reports = uip_calls(store, project, "RunAll", "MainFlow.cs", "Execute",
+                                "Reports/Parse.cs", 1, "Reports/Parse.cs", &obs.violations);
+        obs.process_path = uip_calls(store, project, "RunAll", "MainFlow.cs", "Execute",
+                                     "Process.cs", 1, "Process.cs", &obs.violations);
+        obs.reset_member = uip_calls(store, project, "CallReset", "Caller2.cs", "Execute",
+                                     "Sub/Reset.cs", 1, "Sub/Reset.cs", &obs.violations);
+        obs.xaml_process = uip_calls(store, project, "Main", "Main.xaml", "Execute", "Process.cs",
+                                     1, "Process.cs", &obs.violations);
+        obs.xaml_renamed = uip_calls(store, project, "Main", "Main.xaml", "Normalize", "Renamed.cs",
+                                     1, "Renamed.cs", &obs.violations);
+        obs.xaml_other = uip_calls(store, project, "Main", "Main.xaml", "Execute", "Other.cs", -1,
+                                   NULL, &obs.violations);
+        obs.plain = uip_calls(store, project, "CallSites", "Plain.cs", NULL, NULL, 1, NULL,
+                              &obs.violations);
+        obs.dynamic = uip_calls(store, project, "Dynamic", "Caller2.cs", NULL, NULL, 1, NULL,
+                                &obs.violations);
+        obs.sentinel = named_node_count(store, project, "LocalOnlySentinel");
+        obs.increment_fn =
+            fixture_node_count(store, project, "Increment.xaml", "Increment", "Function");
+        obs.increment_qn = uip_qn_count(store, project, "Increment", "Function", "Increment.xaml",
+                                        "Increment.xaml");
+    }
+    if (store) {
+        cbm_store_close(store);
+    }
+    cbm_pipeline_free(pipeline);
+    return obs;
+}
+
+static void uip_write_pads(const char *dir) {
+    for (int i = 0; i < 50; i++) {
+        char name[64];
+        char source[96];
+        snprintf(name, sizeof(name), "pad/pad_%02d.ts", i);
+        snprintf(source, sizeof(source), "export function uipPad%02d(): number { return %d; }\n", i,
+                 i);
+        write_temp_file(dir, name, source);
+    }
+}
+
+static void uip_restore_env(char *saved_workers, char *saved_single) {
+    if (saved_workers) {
+        cbm_setenv("CBM_WORKERS", saved_workers, 1);
+        free(saved_workers);
+    } else {
+        cbm_unsetenv("CBM_WORKERS");
+    }
+    if (saved_single) {
+        cbm_setenv("CBM_INDEX_SINGLE_THREAD", saved_single, 1);
+        free(saved_single);
+    } else {
+        cbm_unsetenv("CBM_INDEX_SINGLE_THREAD");
+    }
+}
+
+/* Studio workflows-object invokes become CALLS. Sequential and parallel must
+ * agree. A C# repo without a UiPath project.json is indexed unchanged. */
+TEST(pipeline_uipath_invoke_edges) {
+    static const char project_json[] = "{\n"
+                                       "  \"name\": \"UiPathFixture\",\n"
+                                       "  \"main\": \"Main.xaml\",\n"
+                                       "  \"expressionLanguage\": \"CSharp\"\n"
+                                       "}\n";
+    static const char main_flow[] =
+        "public class MainFlow : CodedWorkflow {\n"
+        "    [Workflow]\n"
+        "    public void RunAll() {\n"
+        "        workflows.Other();\n"
+        "        workflows.Renamed();\n"
+        "        RunWorkflow(\"Sub\\\\Reset.cs\", null);\n"
+        "        workflows.Increment();\n"
+        "        workflows.Invoices_Parse();\n"
+        "        workflows.Reports_Parse();\n"
+        "        services.WorkflowInvocationService.RunWorkflow(\"Process.cs\", null);\n"
+        "    }\n"
+        "}\n";
+    static const char other_cs[] = "public class Other : CodedWorkflow {\n"
+                                   "    [Workflow]\n"
+                                   "    public void Execute() {}\n"
+                                   "}\n";
+    static const char renamed_cs[] = "public class Renamed : CodedWorkflow {\n"
+                                     "    [Workflow]\n"
+                                     "    public void Normalize() {}\n"
+                                     "}\n";
+    static const char process_cs[] = "public class Process : CodedWorkflow {\n"
+                                     "    [Workflow]\n"
+                                     "    public void Execute() {}\n"
+                                     "}\n";
+    static const char reset_cs[] = "public class Reset : CodedWorkflow {\n"
+                                   "    [Workflow]\n"
+                                   "    public void Execute() {}\n"
+                                   "}\n";
+    static const char invoices_cs[] = "public class Parse : CodedWorkflow {\n"
+                                      "    [Workflow]\n"
+                                      "    public void Execute() {}\n"
+                                      "}\n";
+    static const char reports_cs[] = "public class Parse : CodedWorkflow {\n"
+                                     "    [TestCase]\n"
+                                     "    public void Execute() {}\n"
+                                     "}\n";
+    static const char caller2[] = "public class Caller2 : CodedWorkflow {\n"
+                                  "    [Workflow]\n"
+                                  "    public void CallReset() {\n"
+                                  "        workflows.Reset();\n"
+                                  "    }\n"
+                                  "    public void Dynamic() {\n"
+                                  "        string path = \"Sub\\\\Reset.cs\";\n"
+                                  "        RunWorkflow(path, null);\n"
+                                  "    }\n"
+                                  "}\n";
+    static const char plain_cs[] = "public class Plain {\n"
+                                   "    public void Execute() {}\n"
+                                   "    public void RunWorkflow(string path) {}\n"
+                                   "    public void CallSites() {\n"
+                                   "        workflows.Other();\n"
+                                   "        RunWorkflow(\"Sub\\\\Reset.cs\", null);\n"
+                                   "        Execute();\n"
+                                   "    }\n"
+                                   "}\n";
+    static const char increment_xaml[] = "<Activity>\n"
+                                         "  <Sequence />\n"
+                                         "</Activity>\n";
+    static const char main_xaml[] = "<Activity>\n"
+                                    "  <ui:InvokeWorkflowFile WorkflowFileName=\"Process.cs\" />\n"
+                                    "  <uix:InvokeWorkflowFile WorkflowFileName=\"Renamed.cs\" />\n"
+                                    "  <uix:NInvokeWorkflowFile WorkflowFileName=\"Other.cs\" />\n"
+                                    "</Activity>\n";
+    static const char local_cs[] = "public class Generated : CodedWorkflow {\n"
+                                   "    [Workflow]\n"
+                                   "    public void LocalOnlySentinel() {\n"
+                                   "        // SELECTOR_SENTINEL\n"
+                                   "    }\n"
+                                   "}\n";
+    char tmp[256];
+    char *saved_workers;
+    char *saved_single;
+    UipathObs sequential;
+    UipathObs parallel;
+    snprintf(tmp, sizeof(tmp), "/tmp/cbm_uipath_inv_XXXXXX");
+    if (!cbm_mkdtemp(tmp)) {
+        FAIL("tmpdir");
+    }
+    write_temp_file(tmp, "project.json", project_json);
+    write_temp_file(tmp, "MainFlow.cs", main_flow);
+    write_temp_file(tmp, "Other.cs", other_cs);
+    write_temp_file(tmp, "Renamed.cs", renamed_cs);
+    write_temp_file(tmp, "Process.cs", process_cs);
+    write_temp_file(tmp, "Sub/Reset.cs", reset_cs);
+    write_temp_file(tmp, "Invoices/Parse.cs", invoices_cs);
+    write_temp_file(tmp, "Reports/Parse.cs", reports_cs);
+    write_temp_file(tmp, "Caller2.cs", caller2);
+    write_temp_file(tmp, "Plain.cs", plain_cs);
+    write_temp_file(tmp, "Increment.xaml", increment_xaml);
+    write_temp_file(tmp, "Main.xaml", main_xaml);
+    write_temp_file(tmp, ".local/Generated.cs", local_cs);
+    uip_write_pads(tmp);
+
+    saved_workers = getenv("CBM_WORKERS") ? strdup(getenv("CBM_WORKERS")) : NULL;
+    saved_single =
+        getenv("CBM_INDEX_SINGLE_THREAD") ? strdup(getenv("CBM_INDEX_SINGLE_THREAD")) : NULL;
+    cbm_setenv("CBM_INDEX_SINGLE_THREAD", "1", 1);
+    sequential = uip_observe(tmp, "uipath-sequential.db");
+    cbm_unsetenv("CBM_INDEX_SINGLE_THREAD");
+    cbm_setenv("CBM_WORKERS", "4", 1);
+    parallel = uip_observe(tmp, "uipath-parallel.db");
+    uip_restore_env(saved_workers, saved_single);
+    th_rmtree(tmp);
+
+    if (sequential.run_rc != 0 || parallel.run_rc != 0 || sequential.other != 1 ||
+        parallel.other != 1 || sequential.renamed != 1 || sequential.reset_path != 1 ||
+        sequential.increment != 1 || sequential.invoices != 1 || sequential.reports != 1 ||
+        sequential.process_path != 1 || sequential.reset_member != 1 ||
+        sequential.xaml_process != 1 || sequential.xaml_renamed != 1 ||
+        sequential.xaml_other != 0 || sequential.plain != 0 || sequential.dynamic != 0 ||
+        sequential.sentinel != 0 || sequential.increment_fn != 1 || sequential.increment_qn != 1 ||
+        sequential.violations != 0 || parallel.renamed != sequential.renamed ||
+        parallel.reset_path != sequential.reset_path ||
+        parallel.increment != sequential.increment || parallel.invoices != sequential.invoices ||
+        parallel.reports != sequential.reports ||
+        parallel.process_path != sequential.process_path ||
+        parallel.reset_member != sequential.reset_member ||
+        parallel.xaml_process != sequential.xaml_process ||
+        parallel.xaml_renamed != sequential.xaml_renamed ||
+        parallel.xaml_other != sequential.xaml_other || parallel.plain != sequential.plain ||
+        parallel.dynamic != sequential.dynamic || parallel.sentinel != sequential.sentinel ||
+        parallel.increment_fn != sequential.increment_fn ||
+        parallel.increment_qn != sequential.increment_qn ||
+        parallel.violations != sequential.violations) {
+        fprintf(stderr,
+                "  [uipath] rc=%d/%d other=%d/%d renamed=%d/%d reset=%d/%d inc=%d/%d "
+                "inv=%d/%d rep=%d/%d proc=%d/%d member=%d/%d xproc=%d/%d xren=%d/%d "
+                "xother=%d/%d plain=%d/%d dyn=%d/%d sent=%d/%d fn=%d/%d qn=%d/%d viol=%d/%d\n",
+                sequential.run_rc, parallel.run_rc, sequential.other, parallel.other,
+                sequential.renamed, parallel.renamed, sequential.reset_path, parallel.reset_path,
+                sequential.increment, parallel.increment, sequential.invoices, parallel.invoices,
+                sequential.reports, parallel.reports, sequential.process_path,
+                parallel.process_path, sequential.reset_member, parallel.reset_member,
+                sequential.xaml_process, parallel.xaml_process, sequential.xaml_renamed,
+                parallel.xaml_renamed, sequential.xaml_other, parallel.xaml_other, sequential.plain,
+                parallel.plain, sequential.dynamic, parallel.dynamic, sequential.sentinel,
+                parallel.sentinel, sequential.increment_fn, parallel.increment_fn,
+                sequential.increment_qn, parallel.increment_qn, sequential.violations,
+                parallel.violations);
+    }
+    ASSERT_EQ(sequential.run_rc, 0);
+    ASSERT_TRUE(sequential.opened);
+    ASSERT_EQ(parallel.run_rc, 0);
+    ASSERT_TRUE(parallel.opened);
+    ASSERT_EQ(sequential.other, 1);
+    ASSERT_EQ(sequential.renamed, 1);
+    ASSERT_EQ(sequential.reset_path, 1);
+    ASSERT_EQ(sequential.increment, 1);
+    ASSERT_EQ(sequential.invoices, 1);
+    ASSERT_EQ(sequential.reports, 1);
+    ASSERT_EQ(sequential.process_path, 1);
+    ASSERT_EQ(sequential.reset_member, 1);
+    ASSERT_EQ(sequential.xaml_process, 1);
+    ASSERT_EQ(sequential.xaml_renamed, 1);
+    ASSERT_EQ(sequential.xaml_other, 0);
+    ASSERT_EQ(sequential.plain, 0);
+    ASSERT_EQ(sequential.dynamic, 0);
+    ASSERT_EQ(sequential.sentinel, 0);
+    ASSERT_EQ(sequential.increment_fn, 1);
+    ASSERT_EQ(sequential.increment_qn, 1);
+    ASSERT_EQ(sequential.violations, 0);
+    ASSERT_EQ(parallel.other, sequential.other);
+    ASSERT_EQ(parallel.renamed, sequential.renamed);
+    ASSERT_EQ(parallel.reset_path, sequential.reset_path);
+    ASSERT_EQ(parallel.increment, sequential.increment);
+    ASSERT_EQ(parallel.invoices, sequential.invoices);
+    ASSERT_EQ(parallel.reports, sequential.reports);
+    ASSERT_EQ(parallel.process_path, sequential.process_path);
+    ASSERT_EQ(parallel.reset_member, sequential.reset_member);
+    ASSERT_EQ(parallel.xaml_process, sequential.xaml_process);
+    ASSERT_EQ(parallel.xaml_renamed, sequential.xaml_renamed);
+    ASSERT_EQ(parallel.xaml_other, sequential.xaml_other);
+    ASSERT_EQ(parallel.plain, sequential.plain);
+    ASSERT_EQ(parallel.dynamic, sequential.dynamic);
+    ASSERT_EQ(parallel.sentinel, sequential.sentinel);
+    ASSERT_EQ(parallel.increment_fn, sequential.increment_fn);
+    ASSERT_EQ(parallel.increment_qn, sequential.increment_qn);
+    ASSERT_EQ(parallel.violations, 0);
+    PASS();
+}
+
+TEST(pipeline_uipath_requires_project_json) {
+    static const char caller[] = "public class Caller : CodedWorkflow {\n"
+                                 "    [Workflow]\n"
+                                 "    public void Execute() {\n"
+                                 "        workflows.Increment();\n"
+                                 "        RunWorkflow(\"Increment.xaml\", null);\n"
+                                 "    }\n"
+                                 "}\n";
+    static const char increment[] = "<Activity>\n"
+                                    "  <Sequence />\n"
+                                    "</Activity>\n";
+    char tmp[256];
+    UipathObs obs;
+    char db_path[512];
+    cbm_pipeline_t *pipeline;
+    const char *project;
+    cbm_store_t *store;
+    int fn = -1;
+    int edges = -1;
+    snprintf(tmp, sizeof(tmp), "/tmp/cbm_uipath_plain_XXXXXX");
+    if (!cbm_mkdtemp(tmp)) {
+        FAIL("tmpdir");
+    }
+    write_temp_file(tmp, "Caller.cs", caller);
+    write_temp_file(tmp, "Increment.xaml", increment);
+    snprintf(db_path, sizeof(db_path), "%s/plain.db", tmp);
+    pipeline = cbm_pipeline_new(tmp, db_path, CBM_MODE_FULL);
+    obs.run_rc = pipeline ? cbm_pipeline_run(pipeline) : -1;
+    project = pipeline ? cbm_pipeline_project_name(pipeline) : NULL;
+    store = cbm_store_open_path(db_path);
+    if (store && project) {
+        fn = fixture_node_count(store, project, "Increment.xaml", "Increment", "Function");
+        edges = uip_calls(store, project, "Execute", "Caller.cs", NULL, NULL, 1, NULL, NULL);
+        cbm_store_close(store);
+    }
+    if (pipeline) {
+        cbm_pipeline_free(pipeline);
+    }
+    th_rmtree(tmp);
+    (void)obs;
+    ASSERT_EQ(obs.run_rc, 0);
+    ASSERT_EQ(fn, 0);
+    ASSERT_EQ(edges, 0);
+    PASS();
+}
+
 SUITE(pipeline) {
     RUN_TEST(pipeline_nested_fixture_files_are_written);
     RUN_TEST(pipeline_fixture_file_parent_is_preserved);
@@ -16548,6 +16968,8 @@ SUITE(pipeline) {
     RUN_TEST(pipeline_markdown_and_config_prose_reaches_fts_body);
     RUN_TEST(pipeline_semantic_edges_no_functions);
     RUN_TEST(pipeline_semantic_batched_matches_unbatched);
+    RUN_TEST(pipeline_uipath_invoke_edges);
+    RUN_TEST(pipeline_uipath_requires_project_json);
 }
 
 /* Focused semantic-manifest and publication contracts. Kept separate from the

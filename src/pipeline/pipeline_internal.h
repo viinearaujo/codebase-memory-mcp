@@ -156,6 +156,11 @@ typedef struct {
      * the incremental and probe routes still hand the cache array to passes
      * that index it directly, so they keep results in memory (follow-up). */
     bool spill_allowed;
+
+    /* UiPath invoke pass. Non-NULL only after a project.json with
+     * expressionLanguage was seen, and only until call resolution finishes.
+     * Owned by pass_uipath.c. Read-only for the call resolvers. */
+    struct cbm_uipath_index *uipath_index;
 } cbm_pipeline_ctx_t;
 
 /* ── Result-cache access contract (spill mode) ────────────────────────
@@ -637,6 +642,12 @@ int cbm_pipeline_pass_definitions(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t
                                   int file_count);
 
 int cbm_pipeline_pass_k8s(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *files, int file_count);
+
+/* UiPath coded/XAML invokes. No-op unless a project.json contains
+ * expressionLanguage. Call resolvers must skip sites this pass claims. */
+int cbm_pipeline_pass_uipath(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *files, int file_count);
+bool cbm_uipath_suppress_generic_call(const cbm_pipeline_ctx_t *ctx, const CBMCall *call);
+void cbm_uipath_index_free(cbm_pipeline_ctx_t *ctx);
 
 int cbm_pipeline_pass_calls(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *files, int file_count);
 

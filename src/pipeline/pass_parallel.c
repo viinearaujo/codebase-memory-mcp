@@ -2898,6 +2898,10 @@ static void resolve_file_calls(resolve_ctx_t *rc, resolve_worker_state_t *ws, CB
         if (!call->callee_name) {
             continue;
         }
+        /* Same claim as pass_calls.c: a UiPath invoke already emitted its edge. */
+        if (cbm_uipath_suppress_generic_call(rc->pctx, call)) {
+            continue;
+        }
         uint64_t _rc_t0 = extract_now_ns();
         const cbm_gbuf_node_t *source_node =
             find_source_node(rc->main_gbuf, rc->project_name, rel, call->enclosing_func_qn);

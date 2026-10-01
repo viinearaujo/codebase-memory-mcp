@@ -1037,6 +1037,11 @@ int cbm_pipeline_pass_calls(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *file
             if (!call->callee_name) {
                 continue;
             }
+            /* UiPath workflows.Name / literal RunWorkflow sites already have
+             * a CALLS edge. unique_name must not bind them to another method. */
+            if (cbm_uipath_suppress_generic_call(ctx, call)) {
+                continue;
+            }
             total_calls++;
             if (resolve_single_call(ctx, call, result, rel, module_qn, imp_keys, imp_vals,
                                     imp_count, files[i].language)) {
