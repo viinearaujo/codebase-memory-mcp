@@ -1348,6 +1348,7 @@ static int run_extract_resolve(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *changed
                          "elapsed_ms", itoa_buf((int)elapsed_ms(t)));
         }
         cbm_clock_gettime(CLOCK_MONOTONIC, &t);
+        (void)cbm_pipeline_pass_uipath(ctx, changed_files, ci);
         rc = cbm_parallel_resolve(ctx, changed_files, ci, cache, &shared_ids, worker_count,
                                   all_defs, all_def_count, closure ? closure->def_modules : NULL,
                                   module_def_index, registries_arg);
@@ -1383,6 +1384,12 @@ static int run_extract_resolve(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *changed
             owns_cache = true;
         }
         int rc = cbm_pipeline_pass_definitions(ctx, changed_files, ci);
+        if (rc == 0) {
+            rc = cbm_pipeline_check_cancel(ctx);
+        }
+        if (rc == 0) {
+            rc = cbm_pipeline_pass_uipath(ctx, changed_files, ci);
+        }
         if (rc == 0) {
             rc = cbm_pipeline_check_cancel(ctx);
         }
@@ -2534,6 +2541,17 @@ int cbm_pipeline_run_incremental(cbm_pipeline_t *p, const char *db_path, cbm_fil
     /* Fast path: nothing changed → skip. The on-disk DB is left untouched,
      * which means existing hash rows (including for any mode-skipped files
      * that were already preserved by an earlier run) remain intact. */
+    if (!closure_active && n_changed == 0 && deleted_count == 0 &&
+        cbm_uipath_config_binaries_dirty(cbm_pipeline_repo_path(p), store, project)) {
+        cbm_log_info("incremental.uipath", "reason", "config_xlsx_changed");
+        free(is_changed);
+        free(deleted);
+        free_mode_skipped(mode_skipped, mode_skipped_count);
+        cbm_store_free_file_hashes(stored, stored_count);
+        cbm_store_close(store);
+        return CBM_PIPELINE_FORCE_FULL_REINDEX;
+    }
+
     if (!closure_active && n_changed == 0 && deleted_count == 0) {
 #if defined(CBM_INCREMENTAL_TEST_API) && CBM_INCREMENTAL_TEST_API
         incr_test_set_last_route(CBM_INCREMENTAL_ROUTE_NOOP);

@@ -1361,8 +1361,9 @@ TEST(mcp_metadata_byte_budget) {
     ASSERT_NOT_NULL(json);
     /* 15 KiB covered the lean surface at the branch point; get_file_outline,
      * compare_graphs, manage_adr set_sections, and the search_code debug and
-     * list_projects include_details parameters landed on main since. */
-    ASSERT_LT((int)strlen(json), 18 * 1024);
+     * list_projects include_details parameters landed on main since. The seven
+     * UiPath tools add another ~3 KiB of name, description, and schema. */
+    ASSERT_LT((int)strlen(json), 22 * 1024);
 
     yyjson_doc *doc = yyjson_read(json, strlen(json), 0);
     ASSERT_NOT_NULL(doc);
@@ -1418,6 +1419,13 @@ TEST(mcp_tools_have_behavior_annotations) {
          * nothing, so it is read-only and idempotent until edge creation
          * actually lands (#2118). */
         {"ingest_traces", true, false, true, false},
+        {"uipath_overview", true, false, true, false},
+        {"uipath_workflow_outline", true, false, true, false},
+        {"uipath_activity_details", true, false, true, false},
+        {"uipath_find_usages", true, false, true, false},
+        {"uipath_invoke_graph", true, false, true, false},
+        {"uipath_impact", true, false, true, false},
+        {"uipath_lint", true, false, true, false},
     };
 
     char *json = cbm_mcp_tools_list();
@@ -1686,7 +1694,7 @@ TEST(mcp_get_architecture_aspects_schema_enum_pr560) {
     static const char *expected[] = {"all",      "overview",   "structure", "dependencies",
                                      "routes",   "languages",  "packages",  "entry_points",
                                      "hotspots", "boundaries", "layers",    "file_tree",
-                                     "clusters", "cycles"};
+                                     "clusters", "cycles",     "uipath"};
     size_t expected_count = sizeof(expected) / sizeof(expected[0]);
     ASSERT_EQ(yyjson_arr_size(enum_arr), expected_count);
     for (size_t i = 0; i < expected_count; i++) {
@@ -2065,7 +2073,9 @@ TEST(server_handle_analysis_profile_filters_and_rejects_mutators) {
         "search_graph",     "query_graph",      "trace_path",     "get_code_snippet",
         "get_file_outline", "get_graph_schema", "compare_graphs", "get_architecture",
         "search_code",      "list_projects",    "index_status",   "check_index_coverage",
-        "detect_changes",
+        "detect_changes",   "uipath_overview",  "uipath_workflow_outline",
+        "uipath_activity_details", "uipath_find_usages", "uipath_invoke_graph", "uipath_impact",
+        "uipath_lint",
     };
     ASSERT_EQ(mcp_response_tool_count(resp), sizeof(analysis_tools) / sizeof(analysis_tools[0]));
     for (size_t i = 0U; i < sizeof(analysis_tools) / sizeof(analysis_tools[0]); i++) {
@@ -2104,7 +2114,11 @@ TEST(server_handle_scout_profile_exposes_only_the_fast_tier) {
 
     resp = cbm_mcp_server_handle(srv, "{\"jsonrpc\":\"2.0\",\"id\":223,\"method\":\"tools/list\"}");
     ASSERT_NOT_NULL(resp);
-    ASSERT_EQ(mcp_response_tool_count(resp), 8U);
+    ASSERT_EQ(mcp_response_tool_count(resp), 11U);
+    ASSERT_TRUE(mcp_response_has_exact_tool(resp, "uipath_overview"));
+    ASSERT_TRUE(mcp_response_has_exact_tool(resp, "uipath_workflow_outline"));
+    ASSERT_TRUE(mcp_response_has_exact_tool(resp, "uipath_find_usages"));
+    ASSERT_FALSE(mcp_response_has_exact_tool(resp, "uipath_lint"));
     ASSERT_TRUE(mcp_response_has_exact_tool(resp, "search_graph"));
     ASSERT_TRUE(mcp_response_has_exact_tool(resp, "trace_path"));
     ASSERT_TRUE(mcp_response_has_exact_tool(resp, "get_code_snippet"));

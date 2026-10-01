@@ -52,6 +52,7 @@ enum {
 
 #define SLEN(s) (sizeof(s) - 1)
 #include "mcp/mcp.h"
+#include "mcp/uipath_mcp.h"
 #include "mcp/mcp_internal.h"
 #include "store/store.h"
 #include <sqlite3.h>
@@ -689,7 +690,7 @@ static const tool_def_t TOOLS[] = {
      "\"aspects\":{\"type\":\"array\",\"items\":{\"type\":\"string\",\"enum\":[\"all\","
      "\"overview\",\"structure\",\"dependencies\",\"routes\",\"languages\",\"packages\","
      "\"entry_points\",\"hotspots\",\"boundaries\",\"layers\",\"file_tree\",\"clusters\","
-     "\"cycles\"]},"
+     "\"cycles\",\"uipath\"]},"
      "\"description\":\"all=everything; overview=compact except file_tree; omitted=languages/"
      "packages/entry_points; cycles is opt-in.\"},"
      "\"format\":{\"type\":\"string\",\"enum\":[\"tree\",\"json\"],\"default\":\"tree\"}},"
@@ -814,6 +815,47 @@ static const tool_def_t TOOLS[] = {
      "\"object\",\"properties\":{\"caller\":{\"type\":\"string\"},\"callee\":{\"type\":\"string\"},"
      "\"count\":{\"type\":\"integer\"}},\"additionalProperties\":false}},\"project\":{\"type\":"
      "\"string\"}},\"required\":[\"traces\",\"project\"]}"},
+
+    {"uipath_overview",
+     "UiPath project roots, workflow counts, invoke graph, config, and coverage gaps.",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "\"format\":{\"type\":\"string\",\"enum\":[\"tree\",\"json\"],\"default\":\"tree\"}},"
+     "\"required\":[\"project\"]}"},
+    {"uipath_workflow_outline",
+     "Outline one UiPath workflow: contract, activities, callers, and completeness.",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "\"workflow\":{\"type\":\"string\"},\"detail\":{\"type\":\"string\","
+     "\"enum\":[\"skeleton\",\"standard\",\"full\"],\"default\":\"standard\"},"
+     "\"max_output_tokens\":{\"type\":\"integer\",\"default\":3200,\"minimum\":128}},"
+     "\"required\":[\"project\",\"workflow\"]}"},
+    {"uipath_activity_details",
+     "One UiPath activity: expressions, reads, writes, selectors, and invoke bindings.",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "\"activity\":{\"type\":\"string\",\"description\":\"QN or workflow#IdRef\"}},"
+     "\"required\":[\"project\",\"activity\"]}"},
+    {"uipath_find_usages",
+     "Sites that use a workflow, argument, variable, config key, asset, queue, or type.",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "\"kind\":{\"type\":\"string\",\"enum\":[\"workflow\",\"argument\",\"variable\","
+     "\"config_key\",\"asset\",\"queue\",\"package\",\"activity_type\",\"selector\",\"class\"]},"
+     "\"name\":{\"type\":\"string\"}},\"required\":[\"project\",\"kind\",\"name\"]}"},
+    {"uipath_invoke_graph",
+     "Invoke graph from entry points or one workflow, including dynamic sites.",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "\"workflow\":{\"type\":\"string\"},\"direction\":{\"type\":\"string\","
+     "\"enum\":[\"inbound\",\"outbound\",\"both\"],\"default\":\"outbound\"},"
+     "\"depth\":{\"type\":\"integer\",\"default\":3,\"minimum\":1,\"maximum\":8}},"
+     "\"required\":[\"project\"]}"},
+    {"uipath_impact",
+     "Edit list for an argument, workflow, config, package, extract, or git change.",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "\"target\":{\"type\":\"string\"},\"change\":{\"type\":\"string\"}},"
+     "\"required\":[\"project\",\"change\"]}"},
+    {"uipath_lint",
+     "UiPath findings: selectors, bindings, config, packages, and large workflows.",
+     "{\"type\":\"object\",\"properties\":{\"project\":{\"type\":\"string\"},"
+     "\"scope\":{\"type\":\"string\"},\"categories\":{\"type\":\"array\","
+     "\"items\":{\"type\":\"string\"}}},\"required\":[\"project\"]}"},
 };
 
 static const int TOOL_COUNT = sizeof(TOOLS) / sizeof(TOOLS[0]);
@@ -858,6 +900,13 @@ static const tool_annotation_def_t TOOL_ANNOTATIONS[] = {
     {"detect_changes", true, false, true, false},
     {"manage_adr", false, true, false, false},
     {"ingest_traces", true, false, true, false},
+    {"uipath_overview", true, false, true, false},
+    {"uipath_workflow_outline", true, false, true, false},
+    {"uipath_activity_details", true, false, true, false},
+    {"uipath_find_usages", true, false, true, false},
+    {"uipath_invoke_graph", true, false, true, false},
+    {"uipath_impact", true, false, true, false},
+    {"uipath_lint", true, false, true, false},
 };
 
 static const tool_annotation_def_t *mcp_tool_annotations(const char *name) {
@@ -915,11 +964,13 @@ static bool mcp_tool_allowed(cbm_mcp_tool_profile_t profile, const char *name) {
         "search_graph",     "query_graph",      "trace_path",     "get_code_snippet",
         "get_file_outline", "get_graph_schema", "compare_graphs", "get_architecture",
         "search_code",      "list_projects",    "index_status",   "check_index_coverage",
-        "detect_changes",
+        "detect_changes",   "uipath_overview", "uipath_workflow_outline", "uipath_activity_details",
+        "uipath_find_usages", "uipath_invoke_graph", "uipath_impact", "uipath_lint",
     };
     static const char *const scout_tools[] = {
         "search_graph",     "trace_path",    "get_code_snippet", "get_file_outline",
         "get_architecture", "list_projects", "index_status",     "check_index_coverage",
+        "uipath_overview",  "uipath_workflow_outline", "uipath_find_usages",
     };
     if (!name) {
         return false;
@@ -1242,6 +1293,32 @@ static char *cbm_mcp_prompts_list(void) {
     yyjson_mut_obj_add_val(doc, review, "arguments", review_arguments);
     yyjson_mut_arr_add_val(prompts, review);
 
+    yyjson_mut_val *explain = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_str(doc, explain, "name", "explain_uipath_workflow");
+    yyjson_mut_obj_add_str(doc, explain, "title", "Explain UiPath workflow");
+    yyjson_mut_obj_add_str(doc, explain, "description",
+                           "Outline a UiPath workflow and leave the prose to the client.");
+    yyjson_mut_val *explain_arguments = yyjson_mut_arr(doc);
+    mcp_add_prompt_argument(doc, explain_arguments, "project", "Project",
+                            "Indexed project name from list_projects.", true);
+    mcp_add_prompt_argument(doc, explain_arguments, "workflow", "Workflow",
+                            "Repo-relative workflow path.", true);
+    yyjson_mut_obj_add_val(doc, explain, "arguments", explain_arguments);
+    yyjson_mut_arr_add_val(prompts, explain);
+
+    yyjson_mut_val *plan = yyjson_mut_obj(doc);
+    yyjson_mut_obj_add_str(doc, plan, "name", "plan_uipath_change");
+    yyjson_mut_obj_add_str(doc, plan, "title", "Plan UiPath change");
+    yyjson_mut_obj_add_str(doc, plan, "description",
+                           "Plan a UiPath argument, workflow, or config change from the graph.");
+    yyjson_mut_val *plan_arguments = yyjson_mut_arr(doc);
+    mcp_add_prompt_argument(doc, plan_arguments, "project", "Project",
+                            "Indexed project name from list_projects.", true);
+    mcp_add_prompt_argument(doc, plan_arguments, "change", "Change",
+                            "The argument, workflow, or config change to plan.", true);
+    yyjson_mut_obj_add_val(doc, plan, "arguments", plan_arguments);
+    yyjson_mut_arr_add_val(prompts, plan);
+
     yyjson_mut_obj_add_val(doc, root, "prompts", prompts);
     char *out = yy_doc_to_str(doc);
     yyjson_mut_doc_free(doc);
@@ -1309,7 +1386,9 @@ static char *cbm_mcp_prompt_get(const char *params_json, char **error_json) {
     const char *name = yyjson_get_str(name_value);
     bool is_explore = strcmp(name, "explore_codebase") == 0;
     bool is_review = strcmp(name, "review_change_impact") == 0;
-    if (!is_explore && !is_review) {
+    bool is_explain = strcmp(name, "explain_uipath_workflow") == 0;
+    bool is_plan = strcmp(name, "plan_uipath_change") == 0;
+    if (!is_explore && !is_review && !is_explain && !is_plan) {
         *error_json = mcp_prompt_error_json(JSONRPC_INVALID_PARAMS, "Invalid prompt name");
         yyjson_doc_free(params_doc);
         return NULL;
@@ -1317,7 +1396,8 @@ static char *cbm_mcp_prompt_get(const char *params_json, char **error_json) {
 
     yyjson_val *arguments = yyjson_obj_get(params, "arguments");
     const char *project = mcp_prompt_string_argument(arguments, "project");
-    const char *request = mcp_prompt_string_argument(arguments, is_explore ? "question" : "change");
+    const char *request = mcp_prompt_string_argument(
+        arguments, is_explore ? "question" : (is_explain ? "workflow" : "change"));
     if (!project || !request) {
         *error_json =
             mcp_prompt_error_json(JSONRPC_INVALID_PARAMS, "Missing required prompt arguments");
@@ -1351,23 +1431,38 @@ static char *cbm_mcp_prompt_get(const char *params_json, char **error_json) {
         "include_tests=true) for affected callers, callees, and tests. Read exact definitions "
         "with get_code_snippet and use query_graph for cross-boundary patterns. Report affected "
         "callers, tests, boundaries, and risks; do not modify files.";
+    static const char EXPLAIN_TEMPLATE[] =
+        "Explain workflow \"%s\" in project \"%s\".\n\n"
+        "Call uipath_workflow_outline(detail=standard) and uipath_activity_details for the "
+        "risky activities. Write the prose from that outline. Do not dump raw XAML.";
+    static const char PLAN_TEMPLATE[] =
+        "Plan this UiPath change in project \"%s\": %s\n\n"
+        "Call uipath_impact for the edit list, uipath_find_usages for every affected name, "
+        "and uipath_lint for selectors and bindings. Report completeness and covering tests.";
 
     size_t text_size = strlen(project) + strlen(request) + strlen(base_branch) +
-                       (is_explore ? sizeof(EXPLORE_TEMPLATE) : sizeof(REVIEW_TEMPLATE));
+                       sizeof(EXPLAIN_TEMPLATE) + sizeof(PLAN_TEMPLATE) + sizeof(REVIEW_TEMPLATE);
     char *text = malloc(text_size);
     if (!text) {
         *error_json = mcp_prompt_error_json(JSONRPC_INTERNAL_ERROR, "Internal error");
         yyjson_doc_free(params_doc);
         return NULL;
     }
+    const char *title = "Graph-first change-impact review";
     if (is_explore) {
         snprintf(text, text_size, EXPLORE_TEMPLATE, project, request);
+        title = "Graph-first codebase exploration";
+    } else if (is_explain) {
+        snprintf(text, text_size, EXPLAIN_TEMPLATE, request, project);
+        title = "Explain a UiPath workflow from its outline";
+    } else if (is_plan) {
+        snprintf(text, text_size, PLAN_TEMPLATE, project, request);
+        title = "Plan a UiPath change from the graph";
     } else {
         snprintf(text, text_size, REVIEW_TEMPLATE, project, request, base_branch);
     }
 
-    char *result = mcp_prompt_result(
-        is_explore ? "Graph-first codebase exploration" : "Graph-first change-impact review", text);
+    char *result = mcp_prompt_result(title, text);
     free(text);
     yyjson_doc_free(params_doc);
     return result;
@@ -4191,7 +4286,8 @@ static char *bm25_search(cbm_store_t *store, const char *project, const char *qu
          * description — so excluding them made the body column unreachable.
          * This exclusion list is MIRRORED in the count query below; the two
          * must be changed together or results desynchronise from counts. */
-        "  AND n.label NOT IN ('File','Folder','Variable','Project') "
+        "  AND n.label NOT IN ('File','Folder','Project') "
+        "  AND (?7 IS NOT NULL OR n.label NOT IN ('Variable','Activity','Argument','Selector')) "
         "  AND (?6 IS NULL OR n.file_path LIKE ?6) "
         /* The caller's label filter applies in query mode exactly as it does
          * in the structural mode (2026-09-16 probe: `label=Class` was ignored
@@ -4238,7 +4334,9 @@ static char *bm25_search(cbm_store_t *store, const char *project, const char *qu
                                 /* MIRRORS the ranked query's filter verbatim — same weights, same
                                  * label exclusions. Changing one alone reports a total that does
                                  * not describe the rows returned. */
-                                "      AND n.label NOT IN ('File','Folder','Variable','Project')"
+                                "      AND n.label NOT IN ('File','Folder','Project')"
+                                "      AND (?7 IS NOT NULL OR n.label NOT IN "
+                                "('Variable','Activity','Argument','Selector'))"
                                 "      AND (?6 IS NULL OR n.file_path LIKE ?6)"
                                 "      AND (?7 IS NULL OR n.label = ?7)"
                                 ")";
@@ -7029,7 +7127,7 @@ static char *handle_delete_project(cbm_mcp_server_t *srv, const char *args) {
 static const char *VALID_ASPECTS[] = {"all",      "overview",   "structure", "dependencies",
                                       "routes",   "languages",  "packages",  "entry_points",
                                       "hotspots", "boundaries", "layers",    "file_tree",
-                                      "clusters", "cycles",     NULL};
+                                      "clusters", "cycles",     "uipath",    NULL};
 
 /* ── SCC / cycle condensation (get_architecture "cycles") ─────────
  * Iterative Tarjan over the CALLS call graph. Recursion would overflow on a
@@ -7624,6 +7722,13 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
         }
         cbm_tree_scalar_int(&sb, "total_nodes", node_count);
         cbm_tree_scalar_int(&sb, "total_edges", edge_count);
+        if (aspect_wanted(aspects_doc, aspects_arr, "uipath")) {
+            char *uip = cbm_uipath_architecture_summary(store, project);
+            if (uip && uip[0]) {
+                cbm_tree_scalar_str(&sb, "uipath", uip);
+            }
+            free(uip);
+        }
 
         if (aspect_wanted(aspects_doc, aspects_arr, "structure") && schema.node_label_count > 0) {
             static const char *const lcols[] = {"label", "count"};
@@ -7917,6 +8022,13 @@ static char *handle_get_architecture(cbm_mcp_server_t *srv, const char *args) {
     }
     yyjson_mut_obj_add_int(doc, root, "total_nodes", node_count);
     yyjson_mut_obj_add_int(doc, root, "total_edges", edge_count);
+    if (aspect_wanted(aspects_doc, aspects_arr, "uipath")) {
+        char *uip = cbm_uipath_architecture_summary(store, project);
+        if (uip && uip[0]) {
+            yyjson_mut_obj_add_strcpy(doc, root, "uipath", uip);
+        }
+        free(uip);
+    }
 
     /* Every section below is the json-tree model: {cols, rows[[...]]} —
      * mirrors the text tree tables one-for-one. */
@@ -8512,7 +8624,8 @@ enum {
 static long node_resolution_score(const cbm_node_t *n) {
     long label_rank = RES_RANK_MODULE;
     if (n->label) {
-        if (strcmp(n->label, "Function") == 0 || strcmp(n->label, "Method") == 0) {
+        if (strcmp(n->label, "Function") == 0 || strcmp(n->label, "Method") == 0 ||
+            strcmp(n->label, "Workflow") == 0) {
             label_rank = RES_RANK_CALLABLE;
         } else if (strcmp(n->label, "Module") != 0 && strcmp(n->label, "File") != 0) {
             label_rank = RES_RANK_OTHER;
@@ -8536,8 +8649,12 @@ static bool node_is_real_callable_def(const cbm_node_t *n) {
     if (!n->label) {
         return false;
     }
-    if (strcmp(n->label, "Function") != 0 && strcmp(n->label, "Method") != 0) {
+    if (strcmp(n->label, "Function") != 0 && strcmp(n->label, "Method") != 0 &&
+        strcmp(n->label, "Workflow") != 0) {
         return false;
+    }
+    if (strcmp(n->label, "Workflow") == 0) {
+        return true;
     }
     return (long)n->end_line - (long)n->start_line > 0;
 }
@@ -12152,11 +12269,12 @@ static char *build_snippet_response(cbm_mcp_server_t *srv, cbm_node_t *node,
     char *source_mode = cbm_mcp_get_string_arg(args, "source_mode");
     bool explicit_full = source_mode && strcmp(source_mode, "full") == 0;
     bool explicit_outline = source_mode && strcmp(source_mode, "outline") == 0;
+    bool workflow = node->label && strcmp(node->label, "Workflow") == 0;
     bool container =
         node->label && (strcmp(node->label, "File") == 0 || strcmp(node->label, "Module") == 0 ||
                         strcmp(node->label, "Class") == 0 || strcmp(node->label, "Interface") == 0);
-    bool outline =
-        explicit_outline || (!explicit_full && container && original_end - original_start >= 200);
+    bool outline = explicit_outline || (workflow && !explicit_full) ||
+                   (!explicit_full && container && original_end - original_start >= 200);
     free(source_mode);
 
     int start = outline ? original_start : cbm_mcp_get_int_arg(args, "start_line", original_start);
@@ -16616,7 +16734,13 @@ static char *handle_detect_changes(cbm_mcp_server_t *srv, const char *args) {
     cbm_traverse_result_t impact = {0};
     bool engine_saturated = false;
     if (want_symbols && seed_count > 0) {
-        (void)cbm_store_bfs_multi(store, seeds, seed_count, direction, NULL, 0, depth,
+        static const char *detect_edges[] = {
+            "CALLS",          "INVOKES_WORKFLOW", "READS",        "WRITES",
+            "READS_CONFIG",   "PASSES_ARGUMENT",  "USES_ASSET",   "ENQUEUES",
+            "DEQUEUES",       "USES_TYPE",
+        };
+        (void)cbm_store_bfs_multi(store, seeds, seed_count, direction, detect_edges,
+                                  (int)(sizeof(detect_edges) / sizeof(detect_edges[0])), depth,
                                   MCP_BFS_LIMIT_MAX, &impact, &engine_saturated);
     }
 
@@ -17790,6 +17914,14 @@ static char *dispatch_tool(cbm_mcp_server_t *srv, const char *tool_name, const c
     }
     if (strcmp(tool_name, "ingest_traces") == 0) {
         return handle_ingest_traces(srv, args_json);
+    }
+    if (strncmp(tool_name, "uipath_", 7) == 0) {
+        char *project = get_project_arg(args_json);
+        cbm_store_t *store = resolve_store(srv, project);
+        const char *effective = project && project[0] ? project : srv->current_project;
+        char *out = cbm_uipath_dispatch_tool(store, effective, tool_name, args_json);
+        free(project);
+        return out;
     }
     char msg[CBM_SZ_256];
     snprintf(msg, sizeof(msg), "unknown tool: %s", tool_name);

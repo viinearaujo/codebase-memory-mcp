@@ -152,6 +152,11 @@ int cbm_gbuf_edge_count_by_type(const cbm_gbuf_t *gb, const char *type);
 /* Delete all edges of a type. */
 int cbm_gbuf_delete_edges_by_type(cbm_gbuf_t *gb, const char *type);
 
+/* Delete edges whose properties JSON contains needle (NULL deletes none).
+ * Used to drop a previous UiPath link pass without touching unrelated edges
+ * that share a type name (CALLS, SIMILAR_TO, USES_TYPE, ...). */
+int cbm_gbuf_delete_edges_with_property_needle(cbm_gbuf_t *gb, const char *needle);
+
 /* ── Vector storage (for semantic embeddings) ───────────────────── */
 
 /* Store an int8-quantized vector for a node. The vector data is copied.

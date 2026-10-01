@@ -156,6 +156,10 @@ typedef struct {
      * the incremental and probe routes still hand the cache array to passes
      * that index it directly, so they keep results in memory (follow-up). */
     bool spill_allowed;
+    /* Set by the UiPath pass when this run has at least one UiPath project
+     * root. Call resolution uses it to suppress generic workflows.X / literal
+     * RunWorkflow edges that the UiPath linker emits itself. */
+    bool uipath_active;
 } cbm_pipeline_ctx_t;
 
 /* ── Result-cache access contract (spill mode) ────────────────────────
@@ -637,6 +641,15 @@ int cbm_pipeline_pass_definitions(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t
                                   int file_count);
 
 int cbm_pipeline_pass_k8s(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *files, int file_count);
+int cbm_pipeline_pass_uipath(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *files, int file_count);
+/* True when a UiPath project is active and this call is the generic form of
+ * workflows.Member() or a literal RunWorkflow("path") that the UiPath pass
+ * records itself. */
+bool cbm_uipath_suppress_generic_call(const cbm_pipeline_ctx_t *ctx, const char *callee_name,
+                                      const char *first_string_arg);
+/* True when a Config.xlsx (not a discovered source file) under a UiPath root
+ * changed since the stored ConfigFile node was written. */
+bool cbm_uipath_config_binaries_dirty(const char *repo, cbm_store_t *store, const char *project);
 
 int cbm_pipeline_pass_calls(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *files, int file_count);
 
