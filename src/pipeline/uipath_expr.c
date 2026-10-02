@@ -30,18 +30,70 @@ static int is_ident(int c) {
 }
 
 static int stoplist(const char *s) {
-    static const char *stop[] = {
-        "String",     "Convert", "CInt",     "CStr",      "CBool",    "CDbl",
-        "CDate",      "CDec",    "CLng",     "Path",      "Nothing",  "True",
-        "False",      "Not",     "And",      "Or",        "AndAlso",  "OrElse",
-        "If",         "Then",    "Else",     "New",       "DirectCast", "CType",
-        "GetType",    "Int32",   "Object",   "Exception", "Now",      "DateTime",
-        "Environment","File",    "Directory","Regex",     "ToString", "ToLower",
-        "Trim",       "Length",  "Count",    "Item",      "Add",      "Contains",
-        "SelectToken","Value",   "Parse",    "Equals",   "IsNothing","Nothing",
-        "StringBuilder", "JObject", "JToken", "JsonConvert", "BusinessRuleException",
-        "MessageBox", "First",   "Where",    "Select",   "ToList",   "ReadAllText",
-        "GetAsset",   "GetCredential", "AddQueueItem", "GetTransactionItem", NULL};
+    static const char *stop[] = {"String",
+                                 "Convert",
+                                 "CInt",
+                                 "CStr",
+                                 "CBool",
+                                 "CDbl",
+                                 "CDate",
+                                 "CDec",
+                                 "CLng",
+                                 "Path",
+                                 "Nothing",
+                                 "True",
+                                 "False",
+                                 "Not",
+                                 "And",
+                                 "Or",
+                                 "AndAlso",
+                                 "OrElse",
+                                 "If",
+                                 "Then",
+                                 "Else",
+                                 "New",
+                                 "DirectCast",
+                                 "CType",
+                                 "GetType",
+                                 "Int32",
+                                 "Object",
+                                 "Exception",
+                                 "Now",
+                                 "DateTime",
+                                 "Environment",
+                                 "File",
+                                 "Directory",
+                                 "Regex",
+                                 "ToString",
+                                 "ToLower",
+                                 "Trim",
+                                 "Length",
+                                 "Count",
+                                 "Item",
+                                 "Add",
+                                 "Contains",
+                                 "SelectToken",
+                                 "Value",
+                                 "Parse",
+                                 "Equals",
+                                 "IsNothing",
+                                 "Nothing",
+                                 "StringBuilder",
+                                 "JObject",
+                                 "JToken",
+                                 "JsonConvert",
+                                 "BusinessRuleException",
+                                 "MessageBox",
+                                 "First",
+                                 "Where",
+                                 "Select",
+                                 "ToList",
+                                 "ReadAllText",
+                                 "GetAsset",
+                                 "GetCredential",
+                                 "AddQueueItem",
+                                 "GetTransactionItem",
+                                 NULL};
     for (int i = 0; stop[i]; i++) {
         if (strcmp(s, stop[i]) == 0) {
             return 1;
@@ -146,10 +198,13 @@ void uipath_expr_analyze(const char *expr, int lang_cs, const char *const *var_n
             if (lang_cs && p[-1] == '"' && p[-2] == '@') {
                 /* already inside; handled below as normal */
             }
-            while (*p && *p != '"') {
+            while (*p) {
                 if (*p == '"' && p[1] == '"') {
                     p += 2;
                     continue;
+                }
+                if (*p == '"') {
+                    break;
                 }
                 if (lang_cs && *p == '\\' && p[1]) {
                     p += 2;
@@ -246,11 +301,14 @@ void uipath_expr_analyze(const char *expr, int lang_cs, const char *const *var_n
             if (*r == '"') {
                 r++;
                 size_t k = 0;
-                while (*r && *r != '"' && k + 1 < sizeof(key)) {
+                while (*r && k + 1 < sizeof(key)) {
                     if (*r == '"' && r[1] == '"') {
                         key[k++] = '"';
                         r += 2;
                         continue;
+                    }
+                    if (*r == '"') {
+                        break;
                     }
                     key[k++] = *r++;
                 }

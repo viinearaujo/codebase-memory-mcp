@@ -174,11 +174,12 @@ static void emit_key(struct cbm_gbuf *gb, const char *rel, const char *project_q
     json_escape(e_asset, sizeof(e_asset), asset ? asset : "");
     json_escape(e_folder, sizeof(e_folder), folder ? folder : "");
     char props[1400];
-    snprintf(props, sizeof(props),
-             "{\"domain\":\"uipath\",\"strategy\":\"uipath_config\",\"section\":\"%s\","
-             "\"lookup_key\":\"%s\",\"value_preview\":\"%s\",\"description\":\"%s\","
-             "\"project_qn\":\"%s\",\"asset_name\":\"%s\",\"asset_folder\":\"%s\",\"docstring\":\"%s\"}",
-             e_sec, e_look, e_prev, e_desc, project_qn ? project_qn : "", e_asset, e_folder, e_desc);
+    snprintf(
+        props, sizeof(props),
+        "{\"domain\":\"uipath\",\"strategy\":\"uipath_config\",\"section\":\"%s\","
+        "\"lookup_key\":\"%s\",\"value_preview\":\"%s\",\"description\":\"%s\","
+        "\"project_qn\":\"%s\",\"asset_name\":\"%s\",\"asset_folder\":\"%s\",\"docstring\":\"%s\"}",
+        e_sec, e_look, e_prev, e_desc, project_qn ? project_qn : "", e_asset, e_folder, e_desc);
     char name[160];
     snprintf(name, sizeof(name), "%s", lookup && lookup[0] ? lookup : qn);
     upsert(gb, "ConfigKey", name, qn, rel, line, props);
@@ -383,7 +384,8 @@ static int index_json(struct cbm_gbuf *gb, const char *abs_path, const char *rel
     cbm_sha256_hex(text, len, sha);
     yyjson_doc *doc = yyjson_read(text, len, YYJSON_READ_ALLOW_TRAILING_COMMAS);
     if (!doc) {
-        emit_file_node(gb, rel, project_qn, "json", "unknown", env_from_name(rel), mtime, size, sha);
+        emit_file_node(gb, rel, project_qn, "json", "unknown", env_from_name(rel), mtime, size,
+                       sha);
         return 0;
     }
     yyjson_val *root = yyjson_doc_get_root(doc);
@@ -493,7 +495,7 @@ static zip_part *unzip_all(const unsigned char *b, size_t n, int *out_n) {
     }
     int nent = rd16(b + eocd + 10);
     uint32_t cd_off = rd32(b + eocd + 16);
-    if (cd_off >= n || nent < 0 || nent > 256) {
+    if (cd_off >= n || nent > 256) {
         return NULL;
     }
     zip_part *parts = calloc((size_t)nent, sizeof(zip_part));

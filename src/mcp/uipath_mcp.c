@@ -97,7 +97,6 @@ static char *tool_overview(sqlite3 *db, const char *project) {
                            "WHERE project=?1 AND label='UiPathProject' ORDER BY qualified_name",
                            -1, &st, NULL) == SQLITE_OK) {
         sqlite3_bind_text(st, 1, project, -1, SQLITE_TRANSIENT);
-        static const char *cols[] = {"name", "qn", "framework"};
         int rows = 0;
         cbm_sb_t body;
         cbm_sb_init(&body);
@@ -116,6 +115,7 @@ static char *tool_overview(sqlite3 *db, const char *project) {
         }
         sqlite3_finalize(st);
         if (rows) {
+            static const char *cols[] = {"name", "qn", "framework"};
             cbm_tree_table_header(&sb, "projects", rows, cols, 3);
             cbm_sb_append(&sb, body.buf ? body.buf : "");
         }
@@ -165,7 +165,6 @@ static char *tool_outline(sqlite3 *db, const char *project, const char *args) {
                            -1, &st, NULL) == SQLITE_OK) {
         sqlite3_bind_text(st, 1, project, -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(st, 2, wf, -1, SQLITE_TRANSIENT);
-        static const char *cols[] = {"line", "id", "name"};
         cbm_sb_t body;
         cbm_sb_init(&body);
         int rows = 0;
@@ -181,6 +180,7 @@ static char *tool_outline(sqlite3 *db, const char *project, const char *args) {
         }
         sqlite3_finalize(st);
         if (rows) {
+            static const char *cols[] = {"line", "id", "name"};
             cbm_tree_table_header(&sb, "outline", rows, cols, 3);
             cbm_sb_append(&sb, body.buf ? body.buf : "");
         }
@@ -222,7 +222,8 @@ static char *tool_activity(sqlite3 *db, const char *project, const char *args) {
     cbm_tree_scalar_str(&sb, "file", coltxt(st, 3));
     cbm_tree_scalar_int(&sb, "line", sqlite3_column_int(st, 4));
     const char *props = coltxt(st, 5);
-    cbm_tree_scalar_str(&sb, "protected_by", strstr(props, "\"protected_by\":\"\"") ? "" : "see properties");
+    cbm_tree_scalar_str(&sb, "protected_by",
+                        strstr(props, "\"protected_by\":\"\"") ? "" : "see properties");
     sqlite3_finalize(st);
     if (sqlite3_prepare_v2(db,
                            "SELECT e.type, t.label, t.name, t.qualified_name, e.properties "
@@ -231,7 +232,6 @@ static char *tool_activity(sqlite3 *db, const char *project, const char *args) {
                            "ORDER BY e.type, t.qualified_name LIMIT 40",
                            -1, &st, NULL) == SQLITE_OK) {
         sqlite3_bind_int64(st, 1, id);
-        static const char *cols[] = {"edge", "target", "qn"};
         cbm_sb_t body;
         cbm_sb_init(&body);
         int rows = 0;
@@ -245,6 +245,7 @@ static char *tool_activity(sqlite3 *db, const char *project, const char *args) {
         }
         sqlite3_finalize(st);
         if (rows) {
+            static const char *cols[] = {"edge", "target", "qn"};
             cbm_tree_table_header(&sb, "links", rows, cols, 3);
             cbm_sb_append(&sb, body.buf ? body.buf : "");
         }
@@ -297,14 +298,13 @@ static char *tool_usages(sqlite3 *db, const char *project, const char *args) {
         label = "Workflow";
     }
     sqlite3_stmt *st = NULL;
-    const char *sql =
-        "SELECT s.file_path, s.qualified_name, s.start_line, e.type, e.properties "
-        "FROM edges e "
-        "JOIN nodes t ON t.id=e.target_id "
-        "JOIN nodes s ON s.id=e.source_id "
-        "WHERE t.project=?1 AND t.label=?2 AND (t.name=?3 OR t.qualified_name=?3 OR "
-        "t.qualified_name LIKE '%' || ?3) AND e.type=?4 "
-        "ORDER BY s.file_path, s.start_line LIMIT 80";
+    const char *sql = "SELECT s.file_path, s.qualified_name, s.start_line, e.type, e.properties "
+                      "FROM edges e "
+                      "JOIN nodes t ON t.id=e.target_id "
+                      "JOIN nodes s ON s.id=e.source_id "
+                      "WHERE t.project=?1 AND t.label=?2 AND (t.name=?3 OR t.qualified_name=?3 OR "
+                      "t.qualified_name LIKE '%' || ?3) AND e.type=?4 "
+                      "ORDER BY s.file_path, s.start_line LIMIT 80";
     if (sqlite3_prepare_v2(db, sql, -1, &st, NULL) != SQLITE_OK) {
         free(kind);
         free(name);
@@ -318,7 +318,6 @@ static char *tool_usages(sqlite3 *db, const char *project, const char *args) {
     cbm_sb_init(&sb);
     cbm_tree_scalar_str(&sb, "kind", kind);
     cbm_tree_scalar_str(&sb, "name", name);
-    static const char *cols[] = {"file", "site", "line", "edge"};
     cbm_sb_t body;
     cbm_sb_init(&body);
     int rows = 0;
@@ -336,6 +335,7 @@ static char *tool_usages(sqlite3 *db, const char *project, const char *args) {
     sqlite3_finalize(st);
     cbm_tree_scalar_int(&sb, "sites", rows);
     if (rows) {
+        static const char *cols[] = {"file", "site", "line", "edge"};
         cbm_tree_table_header(&sb, "usages", rows, cols, 4);
         cbm_sb_append(&sb, body.buf ? body.buf : "");
     }
@@ -364,12 +364,11 @@ static char *tool_invoke_graph(sqlite3 *db, const char *project, const char *arg
     cbm_tree_scalar_str(&sb, "project", project);
     cbm_tree_scalar_int(&sb, "depth", depth);
     sqlite3_stmt *st = NULL;
-    const char *sql =
-        "SELECT s.qualified_name, t.qualified_name, e.properties FROM edges e "
-        "JOIN nodes s ON s.id=e.source_id JOIN nodes t ON t.id=e.target_id "
-        "WHERE s.project=?1 AND e.type='INVOKES_WORKFLOW' "
-        "AND (?2 IS NULL OR s.file_path=?2 OR s.qualified_name=?2) "
-        "ORDER BY s.qualified_name, t.qualified_name LIMIT 100";
+    const char *sql = "SELECT s.qualified_name, t.qualified_name, e.properties FROM edges e "
+                      "JOIN nodes s ON s.id=e.source_id JOIN nodes t ON t.id=e.target_id "
+                      "WHERE s.project=?1 AND e.type='INVOKES_WORKFLOW' "
+                      "AND (?2 IS NULL OR s.file_path=?2 OR s.qualified_name=?2) "
+                      "ORDER BY s.qualified_name, t.qualified_name LIMIT 100";
     if (sqlite3_prepare_v2(db, sql, -1, &st, NULL) == SQLITE_OK) {
         sqlite3_bind_text(st, 1, project, -1, SQLITE_TRANSIENT);
         if (wf && wf[0]) {
@@ -377,7 +376,6 @@ static char *tool_invoke_graph(sqlite3 *db, const char *project, const char *arg
         } else {
             sqlite3_bind_null(st, 2);
         }
-        static const char *cols[] = {"from", "to", "resolution"};
         cbm_sb_t body;
         cbm_sb_init(&body);
         int rows = 0;
@@ -401,6 +399,7 @@ static char *tool_invoke_graph(sqlite3 *db, const char *project, const char *arg
         sqlite3_finalize(st);
         cbm_tree_scalar_int(&sb, "edges", rows);
         if (rows) {
+            static const char *cols[] = {"from", "to", "resolution"};
             cbm_tree_table_header(&sb, "invokes", rows, cols, 3);
             cbm_sb_append(&sb, body.buf ? body.buf : "");
         }

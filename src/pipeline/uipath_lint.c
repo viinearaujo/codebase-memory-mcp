@@ -75,7 +75,7 @@ int uipath_selector_risk(const char *text, char *reasons, size_t reasons_cap) {
     return score;
 }
 
-static int token_in(char toks[][64], int n, const char *t) {
+static int token_in(const char toks[][64], int n, const char *t) {
     for (int i = 0; i < n; i++) {
         if (strcmp(toks[i], t) == 0) {
             return 1;
@@ -184,8 +184,9 @@ void uipath_emit_similarity(struct cbm_gbuf *gb) {
                 continue;
             }
             char props[640];
-            snprintf(props, sizeof(props),
-                     "{\"strategy\":\"uipath_skeleton\",\"confidence\":0.80,\"kind\":\"workflow\"}");
+            snprintf(
+                props, sizeof(props),
+                "{\"strategy\":\"uipath_skeleton\",\"confidence\":0.80,\"kind\":\"workflow\"}");
             cbm_gbuf_insert_edge(gb, wfs[i].id, wfs[j].id, "SIMILAR_TO", props);
             emitted++;
         }

@@ -33,7 +33,7 @@ static void jesc(char *dst, size_t cap, const char *src) {
         } else if (c == '\t') {
             dst[o++] = '\\';
             dst[o++] = 't';
-        } else if (c == '\r' || c < 0x20) {
+        } else if (c < 0x20) {
             dst[o++] = ' ';
         } else {
             dst[o++] = (char)c;
@@ -131,7 +131,8 @@ static void collapse_path(const char *in, char *out, size_t cap) {
     }
 }
 
-static void join_under_root(const char *root, const char *raw, char *out, size_t cap, int *escaped) {
+static void join_under_root(const char *root, const char *raw, char *out, size_t cap,
+                            int *escaped) {
     char cleaned[768];
     snprintf(cleaned, sizeof(cleaned), "%s", raw ? raw : "");
     norm_slash(cleaned);
@@ -188,7 +189,8 @@ static int64_t up_upsert(cbm_gbuf_t *gb, const char *label, const char *name, co
     if (!name || !name[0]) {
         name = qn;
     }
-    return cbm_gbuf_upsert_node(gb, label, name, qn, file ? file : "", sl, el, props ? props : "{}");
+    return cbm_gbuf_upsert_node(gb, label, name, qn, file ? file : "", sl, el,
+                                props ? props : "{}");
 }
 
 bool cbm_uipath_suppress_generic_call(const cbm_pipeline_ctx_t *ctx, const char *callee_name,
@@ -258,7 +260,8 @@ static int list_has(const char *list, const char *item) {
     const char *p = list;
     size_t n = strlen(item);
     while (*p) {
-        if ((p == list || p[-1] == '|') && strncmp(p, item, n) == 0 && (p[n] == '|' || p[n] == '\0')) {
+        if ((p == list || p[-1] == '|') && strncmp(p, item, n) == 0 &&
+            (p[n] == '|' || p[n] == '\0')) {
             return 1;
         }
         p++;
@@ -302,8 +305,8 @@ static void parse_project_json(cbm_gbuf_t *gb, up_proj *slot, const char *rel, c
         }
         yyjson_val *mainv = yyjson_obj_get(root, "main");
         if (yyjson_is_str(mainv)) {
-            join_under_root(slot->root, yyjson_get_str(mainv), slot->main_path, sizeof(slot->main_path),
-                            NULL);
+            join_under_root(slot->root, yyjson_get_str(mainv), slot->main_path,
+                            sizeof(slot->main_path), NULL);
             proj_add_list(slot->entries, sizeof(slot->entries), slot->main_path);
         }
         yyjson_val *dopt = yyjson_obj_get(root, "designOptions");
@@ -374,7 +377,8 @@ static void parse_project_json(cbm_gbuf_t *gb, up_proj *slot, const char *rel, c
             while ((k = yyjson_obj_iter_next(&it))) {
                 yyjson_val *v = yyjson_obj_iter_get_val(k);
                 int test = 0;
-                if (yyjson_is_obj(v) && (yyjson_obj_get(v, "testCaseId") || yyjson_obj_get(v, "testCaseType"))) {
+                if (yyjson_is_obj(v) &&
+                    (yyjson_obj_get(v, "testCaseId") || yyjson_obj_get(v, "testCaseType"))) {
                     test = 1;
                 }
                 if (test && yyjson_is_str(k)) {
@@ -387,7 +391,8 @@ static void parse_project_json(cbm_gbuf_t *gb, up_proj *slot, const char *rel, c
         yyjson_doc_free(doc);
     }
     if (!slot->name[0]) {
-        snprintf(slot->name, sizeof(slot->name), "%s", slot->root[0] ? base_name(slot->root) : "UiPath");
+        snprintf(slot->name, sizeof(slot->name), "%s",
+                 slot->root[0] ? base_name(slot->root) : "UiPath");
     }
     char e_name[160], e_expr[40], e_out[40], e_fw[40], e_main[200], e_deps[400], e_ent[400];
     jesc(e_name, sizeof(e_name), slot->name);
@@ -418,7 +423,8 @@ static up_proj *owning_proj(up_proj *ps, int n, const char *rel) {
             }
             continue;
         }
-        if (strncmp(rel, ps[i].root, L) == 0 && (rel[L] == '/' || rel[L] == '\0') && L >= best_len) {
+        if (strncmp(rel, ps[i].root, L) == 0 && (rel[L] == '/' || rel[L] == '\0') &&
+            L >= best_len) {
             best = &ps[i];
             best_len = L;
         }
@@ -530,7 +536,8 @@ static void on_xaml_item(void *ud, const uipath_xaml_item *item) {
                  "{\"domain\":\"uipath\",\"direction\":\"%s\",\"type\":\"%s\",\"naming_ok\":%s,"
                  "\"strategy\":\"uipath_structure\",\"project_qn\":\"%s\"}",
                  e2, e3, item->naming_ok ? "true" : "false", s->project_qn ? s->project_qn : "");
-        up_upsert(s->gb, "Argument", item->name, qn, s->wf, item->start_line, item->end_line, props);
+        up_upsert(s->gb, "Argument", item->name, qn, s->wf, item->start_line, item->end_line,
+                  props);
         char line[200];
         snprintf(line, sizeof(line), "%s %s:%s", item->direction, item->name, ty);
         if (s->args_n) {
@@ -554,8 +561,8 @@ static void on_xaml_item(void *ud, const uipath_xaml_item *item) {
                  "{\"domain\":\"uipath\",\"type\":\"%s\",\"scope_id_ref\":\"%s\","
                  "\"parent_id\":\"%s\",\"strategy\":\"uipath_structure\",\"project_qn\":\"%s\"}",
                  e2, e3, e3, s->project_qn ? s->project_qn : "");
-        up_upsert(s->gb, "Variable", item->name[0] ? item->name : "var", qn, s->wf, item->start_line,
-                  item->end_line, props);
+        up_upsert(s->gb, "Variable", item->name[0] ? item->name : "var", qn, s->wf,
+                  item->start_line, item->end_line, props);
         (void)e1;
         return;
     }
@@ -606,7 +613,8 @@ static void finish_workflow_node(scan_ud *s, const char *kind) {
     } else if (s->parse_status == 2) {
         status = "truncated";
     }
-    char e_kind[24], e_root[48], e_ann[240], e_x[200], e_sk[400], e_doc[500], e_sig[400], e_expr[32];
+    char e_kind[24], e_root[48], e_ann[240], e_x[200], e_sk[400], e_doc[500], e_sig[400],
+        e_expr[32];
     jesc(e_kind, sizeof(e_kind), kind);
     jesc(e_root, sizeof(e_root), s->root_kind);
     jesc(e_ann, sizeof(e_ann), s->annotation);
@@ -635,7 +643,8 @@ static void finish_workflow_node(scan_ud *s, const char *kind) {
     int end_line = s->max_line > 0 ? s->max_line : 1;
     up_upsert(s->gb, "Workflow", nm, s->wf, s->wf, 1, end_line, props);
     if (s->parse_status == 2 && s->pipeline) {
-        cbm_pipeline_add_file_error(s->pipeline, s->wf, "uipath workflow truncated", "parse_partial");
+        cbm_pipeline_add_file_error(s->pipeline, s->wf, "uipath workflow truncated",
+                                    "parse_partial");
     }
 }
 
@@ -658,18 +667,20 @@ static void add_coded_activity(cbm_gbuf_t *gb, const char *wf, const char *proje
     jesc(e_id, sizeof(e_id), id);
     jesc(e_f, sizeof(e_f), facts);
     char props[1200];
-    snprintf(props, sizeof(props),
-             "{\"domain\":\"uipath\",\"activity_type\":\"%s\",\"id_ref\":\"%s\",\"id_source\":\"idref\","
-             "\"parent_id\":\"\",\"facts\":\"%s\",\"strategy\":\"uipath_structure\","
-             "\"project_qn\":\"%s\",\"clr_type\":\"%s\"}",
-             e_t, e_id, e_f, project_qn ? project_qn : "", e_t);
+    snprintf(
+        props, sizeof(props),
+        "{\"domain\":\"uipath\",\"activity_type\":\"%s\",\"id_ref\":\"%s\",\"id_source\":\"idref\","
+        "\"parent_id\":\"\",\"facts\":\"%s\",\"strategy\":\"uipath_structure\","
+        "\"project_qn\":\"%s\",\"clr_type\":\"%s\"}",
+        e_t, e_id, e_f, project_qn ? project_qn : "", e_t);
     up_upsert(gb, "Activity", type_name, qn, wf, line, line, props);
 }
 
 static void scan_coded(cbm_gbuf_t *gb, cbm_pipeline_t *pipeline, const char *rel, const char *src,
                        up_proj *proj) {
     (void)pipeline;
-    int marked = strstr(src, "[Workflow]") || strstr(src, "[TestCase]") || strstr(src, "CodedWorkflow");
+    int marked =
+        strstr(src, "[Workflow]") || strstr(src, "[TestCase]") || strstr(src, "CodedWorkflow");
     if (!marked) {
         return;
     }
@@ -712,10 +723,11 @@ static void scan_coded(cbm_gbuf_t *gb, cbm_pipeline_t *pipeline, const char *rel
                 char qn[700];
                 snprintf(qn, sizeof(qn), "%s#arg:%s", rel, name);
                 char props[400];
-                snprintf(props, sizeof(props),
-                         "{\"domain\":\"uipath\",\"direction\":\"%s\",\"type\":\"%s\","
-                         "\"naming_ok\":true,\"strategy\":\"uipath_structure\",\"project_qn\":\"%s\"}",
-                         dir, tok, ud.project_qn);
+                snprintf(
+                    props, sizeof(props),
+                    "{\"domain\":\"uipath\",\"direction\":\"%s\",\"type\":\"%s\","
+                    "\"naming_ok\":true,\"strategy\":\"uipath_structure\",\"project_qn\":\"%s\"}",
+                    dir, tok, ud.project_qn);
                 up_upsert(gb, "Argument", name, qn, rel, line_at(src, ex), line_at(src, ex), props);
             }
         }
@@ -932,8 +944,8 @@ typedef struct {
     int is_test;
 } call_agg;
 
-static void agg_call(call_agg **a, int *n, int *cap, int64_t s, int64_t d, double conf, const char *how,
-                     int is_test) {
+static void agg_call(call_agg **a, int *n, int *cap, int64_t s, int64_t d, double conf,
+                     const char *how, int is_test) {
     for (int i = 0; i < *n; i++) {
         if ((*a)[i].src == s && (*a)[i].dst == d) {
             (*a)[i].sites++;
@@ -1001,7 +1013,8 @@ static up_n *find_member(up_n *wfs, int n, const char *project, const char *memb
         yyjson_val *o = props_of(&d, wfs[i].props);
         const char *mem = js(o, "member");
         const char *pq = js(o, "project_qn");
-        int ok = mem[0] && strcmp(mem, member) == 0 && (project[0] == '\0' || strcmp(pq, project) == 0);
+        int ok =
+            mem[0] && strcmp(mem, member) == 0 && (project[0] == '\0' || strcmp(pq, project) == 0);
         if (d) {
             yyjson_doc_free(d);
         }
@@ -1061,7 +1074,8 @@ static void assign_members(up_n *wfs, int n) {
             continue;
         }
         if (L && wfs[i].props[L - 1] == '}') {
-            snprintf(props, L + 64 + strlen(e), "%.*s,\"member\":\"%s\"}", (int)(L - 1), wfs[i].props, e);
+            snprintf(props, L + 64 + strlen(e), "%.*s,\"member\":\"%s\"}", (int)(L - 1),
+                     wfs[i].props, e);
         } else {
             snprintf(props, L + 64 + strlen(e), "{\"member\":\"%s\"}", e);
         }
@@ -1140,8 +1154,8 @@ static const char *config_value(up_n *keys, int nkeys, up_n *files, int nfiles, 
         const char *prev = js(o, "value_preview");
         int ok = strcmp(lk, lookup) == 0 && (project[0] == '\0' || strcmp(pq, project) == 0) &&
                  file_loaded(files, nfiles, keys[i].file);
-        static char buf[128];
         if (ok) {
+            static char buf[128];
             snprintf(buf, sizeof(buf), "%s", prev);
             if (d) {
                 yyjson_doc_free(d);
@@ -1198,7 +1212,8 @@ static void link_all(cbm_gbuf_t *gb) {
         char *copy = facts[0] ? strdup(facts) : NULL;
         if (copy) {
             char *save = NULL;
-            for (char *line = strtok_r(copy, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+            for (char *line = strtok_r(copy, "\n", &save); line;
+                 line = strtok_r(NULL, "\n", &save)) {
                 if (strncmp(line, "load\t", 5) != 0) {
                     continue;
                 }
@@ -1218,11 +1233,12 @@ static void link_all(cbm_gbuf_t *gb) {
                 const char *hit = hitj ? hitj : hitx;
                 if (hit) {
                     const char *start = hit;
-                    while (start > raw && start[-1] != '"' && start[-1] != ' ' && start[-1] != '[') {
+                    while (start > raw && start[-1] != '"' && start[-1] != ' ' &&
+                           start[-1] != '[') {
                         start--;
                     }
                     char piece[256];
-                    size_t n = (size_t)(hit - start) + (hitj ? 11 : 11);
+                    size_t n = 0;
                     if (hitj) {
                         n = (size_t)(hitj - start) + strlen("Config.json");
                     } else if (hitx) {
@@ -1381,7 +1397,8 @@ static void link_all(cbm_gbuf_t *gb) {
         for (char *line = strtok_r(copy, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
             char kind[32] = "";
             char f1[300] = "", f2[300] = "", f3[400] = "", f4[400] = "";
-            sscanf(line, "%31[^\t]\t%299[^\t]\t%299[^\t]\t%399[^\t]\t%399[^\n]", kind, f1, f2, f3, f4);
+            sscanf(line, "%31[^\t]\t%299[^\t]\t%299[^\t]\t%399[^\t]\t%399[^\n]", kind, f1, f2, f3,
+                   f4);
             int lang_cs = strcmp(f1, "cs") == 0;
             if (strcmp(kind, "invoke") == 0 || strcmp(kind, "invoke_expr") == 0) {
                 const char *raw = f1;
@@ -1393,7 +1410,8 @@ static void link_all(cbm_gbuf_t *gb) {
                     uipath_expr_facts ef;
                     uipath_expr_analyze(raw, 0, vnames, vtypes, nv, anames, atypes, na, 0, &ef);
                     if (ef.nconfig > 0) {
-                        const char *val = config_value(keys, nkey, files, nfile, pq, ef.config_keys[0]);
+                        const char *val =
+                            config_value(keys, nkey, files, nfile, pq, ef.config_keys[0]);
                         if (val && strstr(val, ".xaml")) {
                             snprintf(folded, sizeof(folded), "%s", val);
                             raw = folded;
@@ -1455,7 +1473,8 @@ static void link_all(cbm_gbuf_t *gb) {
                     snprintf(ep, sizeof(ep),
                              "{\"strategy\":\"uipath_invoke\",\"resolution\":\"%s\","
                              "\"confidence\":%.2f,\"line\":%d%s}",
-                             how, conf, acts[i].line, strcmp(how, "pattern") == 0 ? ",\"candidate\":true" : "");
+                             how, conf, acts[i].line,
+                             strcmp(how, "pattern") == 0 ? ",\"candidate\":true" : "");
                     cbm_gbuf_insert_edge(gb, acts[i].id, target->id, "INVOKES_WORKFLOW", ep);
                     int is_test = wf && strstr(wf->props, "\"is_test\":true") != NULL;
                     if (wf) {
@@ -1483,11 +1502,8 @@ static void link_all(cbm_gbuf_t *gb) {
                              strstr(wf->props, "\"is_test\":true") != NULL);
                 }
             } else if (strcmp(kind, "bind") == 0) {
-                /* f1 dir, f2 name, f3 expr */
-                char argqn[700];
-                /* target workflow unknown here; bind is resolved after invoke. Store on the
-                 * activity and match any arg with that name on the invoked workflow below. */
-                (void)argqn;
+                /* f1 dir, f2 name, f3 expr. The invoked workflow is not known on this
+                 * fact line; argument binding is matched after the invoke edge. */
                 (void)f1;
             } else if (strcmp(kind, "expr") == 0 || strcmp(kind, "write") == 0) {
                 int cs = strcmp(f1, "cs") == 0;
@@ -1565,9 +1581,10 @@ static void link_all(cbm_gbuf_t *gb) {
                                     file_loaded(files, nfile, keys[k].file);
                         if (match) {
                             char ep[160];
-                            snprintf(ep, sizeof(ep),
-                                     "{\"strategy\":\"uipath_config\",\"confidence\":1.00,\"line\":%d}",
-                                     acts[i].line);
+                            snprintf(
+                                ep, sizeof(ep),
+                                "{\"strategy\":\"uipath_config\",\"confidence\":1.00,\"line\":%d}",
+                                acts[i].line);
                             cbm_gbuf_insert_edge(gb, acts[i].id, keys[k].id, "READS_CONFIG", ep);
                         }
                         if (kd) {
@@ -1590,10 +1607,11 @@ static void link_all(cbm_gbuf_t *gb) {
                          "{\"domain\":\"uipath\",\"kind\":\"%s\",\"risk_score\":%d,"
                          "\"risk_reasons\":\"%s\",\"strategy\":\"uipath_selector\"}",
                          f1, atoi(f2), e);
-                int64_t sid = up_upsert(gb, "Selector", sha, qn, acts[i].file, acts[i].line, acts[i].line,
-                                        props);
+                int64_t sid = up_upsert(gb, "Selector", sha, qn, acts[i].file, acts[i].line,
+                                        acts[i].line, props);
                 char ep[120];
-                snprintf(ep, sizeof(ep), "{\"strategy\":\"uipath_selector\",\"line\":%d}", acts[i].line);
+                snprintf(ep, sizeof(ep), "{\"strategy\":\"uipath_selector\",\"line\":%d}",
+                         acts[i].line);
                 cbm_gbuf_insert_edge(gb, acts[i].id, sid, "SELECTS_UI_ELEMENT", ep);
             } else if (strcmp(kind, "asset") == 0 || strcmp(kind, "queue") == 0) {
                 const char *op = f1;
@@ -1607,7 +1625,8 @@ static void link_all(cbm_gbuf_t *gb) {
                     via = "config";
                     if (ef.nconfig) {
                         snprintf(literal, sizeof(literal), "%s", ef.config_keys[0]);
-                        const char *val = config_value(keys, nkey, files, nfile, pq, ef.config_keys[0]);
+                        const char *val =
+                            config_value(keys, nkey, files, nfile, pq, ef.config_keys[0]);
                         if (val && val[0] && strcmp(val, "[redacted]") != 0) {
                             snprintf(literal, sizeof(literal), "%s", val);
                             via = "config";
@@ -1620,7 +1639,8 @@ static void link_all(cbm_gbuf_t *gb) {
                          strcmp(kind, "asset") == 0 ? "asset" : "queue", literal);
                 char props[240];
                 snprintf(props, sizeof(props),
-                         "{\"domain\":\"uipath\",\"strategy\":\"uipath_resource\",\"project_qn\":\"%s\"}",
+                         "{\"domain\":\"uipath\",\"strategy\":\"uipath_resource\",\"project_qn\":"
+                         "\"%s\"}",
                          pq);
                 int64_t id = up_upsert(gb, lab, literal, qn, "", 0, 0, props);
                 char ep[200];
@@ -1628,7 +1648,7 @@ static void link_all(cbm_gbuf_t *gb) {
                          "{\"strategy\":\"uipath_resource\",\"op\":\"%s\",\"via\":\"%s\","
                          "\"confidence\":%.2f,\"line\":%d}",
                          op, via, strcmp(via, "literal") == 0 ? 1.0 : 0.8, acts[i].line);
-                const char *et = strcmp(kind, "asset") == 0 ? "USES_ASSET"
+                const char *et = strcmp(kind, "asset") == 0   ? "USES_ASSET"
                                  : strcmp(op, "dequeue") == 0 ? "DEQUEUES"
                                                               : "ENQUEUES";
                 cbm_gbuf_insert_edge(gb, acts[i].id, id, et, ep);
@@ -1637,10 +1657,12 @@ static void link_all(cbm_gbuf_t *gb) {
                 snprintf(qn, sizeof(qn), "%s:res:%s:%s", pq[0] ? pq : "uipath:.", f1, f2);
                 char props[200];
                 snprintf(props, sizeof(props),
-                         "{\"domain\":\"uipath\",\"kind\":\"%s\",\"strategy\":\"uipath_resource\"}", f1);
+                         "{\"domain\":\"uipath\",\"kind\":\"%s\",\"strategy\":\"uipath_resource\"}",
+                         f1);
                 int64_t id = up_upsert(gb, "OrchestratorResource", f2, qn, "", 0, 0, props);
                 char ep[120];
-                snprintf(ep, sizeof(ep), "{\"strategy\":\"uipath_resource\",\"line\":%d}", acts[i].line);
+                snprintf(ep, sizeof(ep), "{\"strategy\":\"uipath_resource\",\"line\":%d}",
+                         acts[i].line);
                 cbm_gbuf_insert_edge(gb, acts[i].id, id, "USES_RESOURCE", ep);
             }
         }
@@ -1670,7 +1692,8 @@ static void link_all(cbm_gbuf_t *gb) {
             if (invoked[0]) {
                 char *copy3 = strdup(facts);
                 char *sv3 = NULL;
-                for (char *line = strtok_r(copy3, "\n", &sv3); line; line = strtok_r(NULL, "\n", &sv3)) {
+                for (char *line = strtok_r(copy3, "\n", &sv3); line;
+                     line = strtok_r(NULL, "\n", &sv3)) {
                     if (strncmp(line, "bind\t", 5) != 0) {
                         continue;
                     }
@@ -1885,7 +1908,8 @@ static void link_all(cbm_gbuf_t *gb) {
             snprintf(qn, sizeof(qn), "%s:asset:%s%s%s", pq[0] ? pq : "uipath:.",
                      folder[0] ? folder : "", folder[0] ? "/" : "", asset);
             char props[160];
-            snprintf(props, sizeof(props), "{\"domain\":\"uipath\",\"strategy\":\"uipath_resource\"}");
+            snprintf(props, sizeof(props),
+                     "{\"domain\":\"uipath\",\"strategy\":\"uipath_resource\"}");
             int64_t id = up_upsert(gb, "Asset", asset, qn, "", 0, 0, props);
             char ep[80];
             snprintf(ep, sizeof(ep), "{\"strategy\":\"uipath_config\"}");
@@ -1896,9 +1920,9 @@ static void link_all(cbm_gbuf_t *gb) {
         }
     }
     for (int c = 0; c < ncls; c++) {
-        if (!clss[c].props || (!strstr(clss[c].props, "CodeActivity") &&
-                                !strstr(clss[c].props, "NativeActivity") &&
-                                !strstr(clss[c].props, "AsyncCodeActivity"))) {
+        if (!clss[c].props ||
+            (!strstr(clss[c].props, "CodeActivity") && !strstr(clss[c].props, "NativeActivity") &&
+             !strstr(clss[c].props, "AsyncCodeActivity"))) {
             continue;
         }
         for (int a = 0; a < nact; a++) {
@@ -1906,13 +1930,15 @@ static void link_all(cbm_gbuf_t *gb) {
             yyjson_val *o = props_of(&d, acts[a].props);
             const char *clr = js(o, "clr_type");
             const char *aty = js(o, "activity_type");
-            int match = (clr[0] && strstr(clr, clss[c].name)) || (aty[0] && strcmp(aty, clss[c].name) == 0);
+            int match =
+                (clr[0] && strstr(clr, clss[c].name)) || (aty[0] && strcmp(aty, clss[c].name) == 0);
             if (match) {
                 char tqn[300];
                 snprintf(tqn, sizeof(tqn), "clr:%s", clr[0] ? clr : aty);
-                int64_t tid = up_upsert(gb, "ActivityType", aty[0] ? aty : clss[c].name, tqn, "", 0, 0,
-                                        "{\"domain\":\"uipath\",\"source\":\"in_repo\","
-                                        "\"strategy\":\"uipath_type\"}");
+                int64_t tid =
+                    up_upsert(gb, "ActivityType", aty[0] ? aty : clss[c].name, tqn, "", 0, 0,
+                              "{\"domain\":\"uipath\",\"source\":\"in_repo\","
+                              "\"strategy\":\"uipath_type\"}");
                 char ep[80];
                 snprintf(ep, sizeof(ep), "{\"strategy\":\"uipath_impl\"}");
                 cbm_gbuf_insert_edge(gb, tid, clss[c].id, "IMPLEMENTED_BY", ep);
@@ -1923,7 +1949,8 @@ static void link_all(cbm_gbuf_t *gb) {
         }
     }
     for (int w = 0; w < nwf; w++) {
-        if (!strstr(wfs[w].props, "\"kind\":\"coded\"") && !strstr(wfs[w].props, "\"kind\":\"test_case\"")) {
+        if (!strstr(wfs[w].props, "\"kind\":\"coded\"") &&
+            !strstr(wfs[w].props, "\"kind\":\"test_case\"")) {
             continue;
         }
         for (int m = 0; m < nmeth; m++) {
@@ -1947,7 +1974,8 @@ static void link_all(cbm_gbuf_t *gb) {
     free_nodes(projs, nproj);
 }
 
-static void scan_xaml_file(cbm_pipeline_ctx_t *ctx, const char *rel, const char *abs, up_proj *proj) {
+static void scan_xaml_file(cbm_pipeline_ctx_t *ctx, const char *rel, const char *abs,
+                           up_proj *proj) {
     int trunc = 0;
     size_t len = 0;
     char *src = read_cap(abs, 32 * 1024 * 1024, &len, &trunc);
@@ -1992,9 +2020,9 @@ bool cbm_uipath_config_binaries_dirty(const char *repo, cbm_store_t *store, cons
         return false;
     }
     sqlite3_stmt *st = NULL;
-    if (sqlite3_prepare_v2(db,
-                           "SELECT qualified_name FROM nodes WHERE project=?1 AND label='UiPathProject'",
-                           -1, &st, NULL) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(
+            db, "SELECT qualified_name FROM nodes WHERE project=?1 AND label='UiPathProject'", -1,
+            &st, NULL) != SQLITE_OK) {
         return false;
     }
     sqlite3_bind_text(st, 1, project, -1, SQLITE_TRANSIENT);
@@ -2019,10 +2047,11 @@ bool cbm_uipath_config_binaries_dirty(const char *repo, cbm_store_t *store, cons
             struct stat fst;
             int exists = stat(abs, &fst) == 0;
             sqlite3_stmt *ns = NULL;
-            if (sqlite3_prepare_v2(db,
-                                   "SELECT properties FROM nodes WHERE project=?1 AND label='ConfigFile' "
-                                   "AND file_path=?2",
-                                   -1, &ns, NULL) != SQLITE_OK) {
+            if (sqlite3_prepare_v2(
+                    db,
+                    "SELECT properties FROM nodes WHERE project=?1 AND label='ConfigFile' "
+                    "AND file_path=?2",
+                    -1, &ns, NULL) != SQLITE_OK) {
                 continue;
             }
             sqlite3_bind_text(ns, 1, project, -1, SQLITE_TRANSIENT);
@@ -2058,7 +2087,8 @@ bool cbm_uipath_config_binaries_dirty(const char *repo, cbm_store_t *store, cons
     return false;
 }
 
-int cbm_pipeline_pass_uipath(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *files, int file_count) {
+int cbm_pipeline_pass_uipath(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *files,
+                             int file_count) {
     if (!ctx || !ctx->gbuf) {
         return 0;
     }
@@ -2086,7 +2116,8 @@ int cbm_pipeline_pass_uipath(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *fil
             yyjson_doc *d = NULL;
             yyjson_val *o = props_of(&d, existing[i]->properties_json);
             snprintf(projs[np].expr, sizeof(projs[np].expr), "%s",
-                     js(o, "expression_language")[0] ? js(o, "expression_language") : "VisualBasic");
+                     js(o, "expression_language")[0] ? js(o, "expression_language")
+                                                     : "VisualBasic");
             snprintf(projs[np].entries, sizeof(projs[np].entries), "%s", js(o, "entries"));
             snprintf(projs[np].main_path, sizeof(projs[np].main_path), "%s", js(o, "main"));
             if (projs[np].main_path[0]) {
@@ -2173,8 +2204,9 @@ int cbm_pipeline_pass_uipath(cbm_pipeline_ctx_t *ctx, const cbm_file_info_t *fil
             char qn[700];
             snprintf(qn, sizeof(qn), "%s:entity:%s", own ? own->qn : "uipath:.", rel);
             char props[160];
-            snprintf(props, sizeof(props),
-                     "{\"domain\":\"uipath\",\"kind\":\"entity\",\"strategy\":\"uipath_resource\"}");
+            snprintf(
+                props, sizeof(props),
+                "{\"domain\":\"uipath\",\"kind\":\"entity\",\"strategy\":\"uipath_resource\"}");
             up_upsert(ctx->gbuf, "OrchestratorResource", "EntitiesStore", qn, rel, 1, 1, props);
         }
     }
