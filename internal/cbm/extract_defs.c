@@ -6292,8 +6292,34 @@ static void push_first_matching_child(CBMExtractCtx *ctx, TSNode node, CBMArena 
     }
 }
 
+/* UiPath project.json and claimed Config*.json are modeled by the UiPath
+ * pass. Generic JSON Variable nodes would also be substring-matched into
+ * CONFIGURES edges. */
+static bool uipath_claims_json(const CBMExtractCtx *ctx) {
+    if (!ctx || !ctx->rel_path || !ctx->source) {
+        return false;
+    }
+    const char *base = strrchr(ctx->rel_path, '/');
+    base = base ? base + 1 : ctx->rel_path;
+    if (strcmp(base, "project.json") == 0) {
+        return strstr(ctx->source, "expressionLanguage") != NULL ||
+               strstr(ctx->source, "studioVersion") != NULL ||
+               strstr(ctx->source, "UiPath.") != NULL;
+    }
+    size_t blen = strlen(base);
+    if (blen > 5 && strncmp(base, "Config", 6) == 0 && strcmp(base + blen - 5, ".json") == 0) {
+        return strstr(ctx->source, "\"Settings\"") != NULL ||
+               strstr(ctx->source, "\"Constants\"") != NULL ||
+               strstr(ctx->source, "\"Assets\"") != NULL;
+    }
+    return false;
+}
+
 // JSON variable extraction: strip quotes from key.
 static void extract_json_var(CBMExtractCtx *ctx, TSNode node, CBMArena *a) {
+    if (uipath_claims_json(ctx)) {
+        return;
+    }
     TSNode key_node = ts_node_child_by_field_name(node, TS_FIELD("key"));
     if (ts_node_is_null(key_node)) {
         return;

@@ -11116,3 +11116,7 @@ _Edge-type histogram (all 32 edge types, zeros included):_
 
 **Output of the analysis:** `eval-results/cfml-graph.md`, `cfml-explorer.md`, `cfml-judged.json`.
 **Aggregates into:** D1-D4 cross-group rollups, D5 within Group E only, Group E, the cfml tier.
+
+## UiPath hybrid graph
+
+Workflow projects are scored on the same Graph-versus-Explorer protocol, with the UiPath tools as the graph condition. Layer A (in CI, `tests/test_uipath.c`) checks node and edge correctness: literal invokes, config reads, no `.local` nodes, and incremental reindex keeping invoke edges. Layer B is about 60 retrieval questions mapped to D1-D5. Layer C is about 30 agent tasks (usage, config, invoke chains, argument edits, refactor, explanation, selector risk, XAML-to-C#). The success bar against Explorer is at least 25 percentage points higher success on modification tasks, at least 50% fewer tokens, and no unsupported claims of absence while `completeness` is `lower_bound`. Pinned repos are listed in `scripts/clone-bench-repos.sh`.

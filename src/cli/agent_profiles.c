@@ -35,26 +35,38 @@ typedef enum {
     PROFILE_TOOL_INDEX_STATUS,
     PROFILE_TOOL_DETECT_CHANGES,
     PROFILE_TOOL_CHECK_INDEX_COVERAGE,
+    PROFILE_TOOL_UIPATH_OVERVIEW,
+    PROFILE_TOOL_UIPATH_OUTLINE,
+    PROFILE_TOOL_UIPATH_ACTIVITY,
+    PROFILE_TOOL_UIPATH_USAGES,
+    PROFILE_TOOL_UIPATH_INVOKE,
+    PROFILE_TOOL_UIPATH_IMPACT,
+    PROFILE_TOOL_UIPATH_LINT,
     PROFILE_TOOL_COUNT
 } profile_tool_t;
 
 static const profile_tool_t scout_tools[] = {
     PROFILE_TOOL_SEARCH_GRAPH,         PROFILE_TOOL_TRACE_PATH,    PROFILE_TOOL_GET_CODE_SNIPPET,
     PROFILE_TOOL_GET_ARCHITECTURE,     PROFILE_TOOL_LIST_PROJECTS, PROFILE_TOOL_INDEX_STATUS,
-    PROFILE_TOOL_CHECK_INDEX_COVERAGE,
+    PROFILE_TOOL_CHECK_INDEX_COVERAGE, PROFILE_TOOL_UIPATH_OVERVIEW, PROFILE_TOOL_UIPATH_OUTLINE,
+    PROFILE_TOOL_UIPATH_USAGES,
 };
 
 static const profile_tool_t verified_tools[] = {
     PROFILE_TOOL_SEARCH_GRAPH,     PROFILE_TOOL_TRACE_PATH,           PROFILE_TOOL_GET_CODE_SNIPPET,
     PROFILE_TOOL_QUERY_GRAPH,      PROFILE_TOOL_GET_ARCHITECTURE,     PROFILE_TOOL_SEARCH_CODE,
     PROFILE_TOOL_GET_GRAPH_SCHEMA, PROFILE_TOOL_LIST_PROJECTS,        PROFILE_TOOL_INDEX_STATUS,
-    PROFILE_TOOL_DETECT_CHANGES,   PROFILE_TOOL_CHECK_INDEX_COVERAGE,
+    PROFILE_TOOL_DETECT_CHANGES,   PROFILE_TOOL_CHECK_INDEX_COVERAGE, PROFILE_TOOL_UIPATH_OVERVIEW,
+    PROFILE_TOOL_UIPATH_OUTLINE,   PROFILE_TOOL_UIPATH_ACTIVITY,      PROFILE_TOOL_UIPATH_USAGES,
+    PROFILE_TOOL_UIPATH_INVOKE,    PROFILE_TOOL_UIPATH_IMPACT,        PROFILE_TOOL_UIPATH_LINT,
 };
 
 static const char *const tool_base_names[PROFILE_TOOL_COUNT] = {
     "search_graph",     "trace_path",     "get_code_snippet",     "query_graph",
     "get_architecture", "search_code",    "get_graph_schema",     "list_projects",
-    "index_status",     "detect_changes", "check_index_coverage",
+    "index_status",     "detect_changes", "check_index_coverage", "uipath_overview",
+    "uipath_workflow_outline", "uipath_activity_details", "uipath_find_usages",
+    "uipath_invoke_graph", "uipath_impact", "uipath_lint",
 };
 
 static bool tier_valid(cbm_graph_tier_t tier) {

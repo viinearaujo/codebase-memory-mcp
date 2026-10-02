@@ -2020,6 +2020,13 @@ static const CBMLangSpec lang_specs[CBM_LANG_COUNT] = {
                       empty_types, empty_types, empty_types, empty_types, empty_types, empty_types,
                       empty_types, NULL, empty_types, NULL, NULL, tree_sitter_xml, NULL},
 
+    /* Workflow Foundation XAML uses the XML grammar but must not emit one Class
+     * node per element. Activity structure is produced by the UiPath pass. */
+    [CBM_LANG_WFXAML] = {CBM_LANG_WFXAML, empty_types, empty_types, empty_types, xml_module_types,
+                         empty_types, empty_types, empty_types, empty_types, empty_types,
+                         empty_types, empty_types, NULL, empty_types, NULL, NULL, tree_sitter_xml,
+                         NULL},
+
     // CBM_LANG_MARKDOWN
     [CBM_LANG_MARKDOWN] = {CBM_LANG_MARKDOWN, empty_types, markdown_class_types, empty_types,
                            markdown_module_types, empty_types, empty_types, empty_types,

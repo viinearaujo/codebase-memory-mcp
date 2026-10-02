@@ -1415,6 +1415,31 @@ int cbm_gbuf_edge_count_by_type(const cbm_gbuf_t *gb, const char *type) {
     return arr ? arr->count : 0;
 }
 
+int cbm_gbuf_delete_edges_with_property_needle(cbm_gbuf_t *gb, const char *needle) {
+    if (!gb || !needle) {
+        return CBM_NOT_FOUND;
+    }
+    int write_idx = 0;
+    for (int i = 0; i < gb->edges.count; i++) {
+        cbm_gbuf_edge_t *e = gb->edges.items[i];
+        if (e->properties_json && strstr(e->properties_json, needle) != NULL) {
+            char key[EDGE_KEY_BUF];
+            make_edge_key(key, sizeof(key), e->source_id, e->target_id, e->type, e->properties_json);
+            uint64_t h0;
+            uint64_t h1;
+            edge_key_hash(key, &h0, &h1);
+            edge_key_map_delete(&gb->edge_by_key, h0, h1);
+            free_edge_strings(e);
+            cbm_free(CBM_MEM_CLASS_GBUF_EDGE, e);
+        } else {
+            gb->edges.items[write_idx++] = gb->edges.items[i];
+        }
+    }
+    gb->edges.count = write_idx;
+    rebuild_edge_secondary_indexes(gb);
+    return 0;
+}
+
 int cbm_gbuf_delete_edges_by_type(cbm_gbuf_t *gb, const char *type) {
     if (!gb || !type) {
         return CBM_NOT_FOUND;

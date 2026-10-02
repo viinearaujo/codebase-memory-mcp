@@ -105,6 +105,12 @@ symlink magma     lean          # .m files — disambiguated via content markers
 symlink kubernetes yaml         # YAML subtype — Deployment/Service manifests
 symlink kustomize yaml          # YAML subtype — kustomization.yaml
 
+# UiPath RPA projects. Pinned by the default branch tip of a shallow clone;
+# re-pin a SHA in docs/UIPATH.md when a benchmark run is recorded.
+clone uipath-reframework "UiPath/ReFrameWork"
+clone uipath-coded       "UiPath/CodedWorkflows"
+clone uipath-queue       "UiPath/Process-Mining-Queue"
+
 echo ""
 echo "=== Clone complete ==="
 ls -1 "$BENCH_DIR/" | wc -l | xargs printf "%s repos ready in $BENCH_DIR\n"

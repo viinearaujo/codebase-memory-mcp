@@ -51,7 +51,10 @@ static const char *ALWAYS_SKIP_DIRS[] = {
     /* Deploy */
     ".vercel", ".netlify", "deploy", "deployed",
     /* Misc */
-    ".codebase-memory", ".qdrant_code_embeddings", ".tmp", "vendor", "vendored", NULL};
+    ".codebase-memory", ".qdrant_code_embeddings", ".tmp", "vendor", "vendored",
+    /* UiPath Studio generated cache. Activity docs under .local/docs are read
+     * directly by the UiPath pass; the tree itself is not indexed. */
+    ".local", NULL};
 
 /* Always-skip directories matched by relative-PATH suffix, not by basename:
  * generated build output whose last path component alone ("views") is far too
@@ -871,6 +874,21 @@ static CBMLanguage detect_file_language(const char *entry_name, const char *abs_
             xbuf[xn] = '\0';
             if (strstr(xbuf, "<Export generator=")) {
                 return CBM_LANG_OBJECTSCRIPT_EXPORT;
+            }
+        }
+    }
+    /* Workflow Foundation XAML (.xaml only; Avalonia .axaml stays XML).
+     * The activities namespace in the first 4KB selects WFXAML so generic XML
+     * Class extraction does not emit one node per activity element. */
+    if (lang == CBM_LANG_XML && dot && strcmp(dot, ".xaml") == 0) {
+        FILE *wf = cbm_fopen(abs_path, "r");
+        if (wf) {
+            char wbuf[4096];
+            size_t wn = fread(wbuf, 1, sizeof(wbuf) - 1, wf);
+            (void)fclose(wf);
+            wbuf[wn] = '\0';
+            if (strstr(wbuf, "schemas.microsoft.com/netfx/2009/xaml/activities")) {
+                return CBM_LANG_WFXAML;
             }
         }
     }
