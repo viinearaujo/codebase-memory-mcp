@@ -37,7 +37,7 @@ High-quality parsing through [tree-sitter](https://tree-sitter.github.io/tree-si
 - **45 supported automatic/conditional client surfaces** — `install` configures detected clients and safely activates conditional clients only when their documented platform, marker, or explicit existing config path is present. See [Multi-Agent Support](#multi-agent-support) for the complete matrix and manual/UI-only boundaries.
 - **Built-in graph visualization** — 3D interactive UI at `localhost:9749`, served from the binary itself.
 - **Infrastructure-as-code indexing** — Dockerfiles, Kubernetes manifests, and Kustomize overlays indexed as graph nodes with cross-references. `Resource` nodes for K8s kinds, `Module` nodes for Kustomize overlays with `IMPORTS` edges to referenced resources.
-- **MCP tools** — search, trace, architecture, impact analysis, targeted index-coverage checks, Cypher queries, dead code detection, cross-service HTTP linking, ADR management, and UiPath workflow tools (`uipath_overview`, `uipath_workflow_outline`, `uipath_find_usages`, and the analysis-tier impact and lint tools). See [docs/UIPATH.md](docs/UIPATH.md).
+- **MCP tools** — search, trace, architecture, impact analysis, targeted index-coverage checks, Cypher queries, dead code detection, cross-service HTTP linking, ADR management, and UiPath workflow tools (`uipath_overview`, `uipath_workflow_outline`, `uipath_find_usages`, and the analysis-tier impact and lint tools). See [docs/UIPATH.md](docs/UIPATH.md) for the graph model, and [docs/UIPATH_GUIDE.md](docs/UIPATH_GUIDE.md) for everyday prompts in Cursor.
 
 ## Quick Start
 

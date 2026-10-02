@@ -1,5 +1,7 @@
 # UiPath hybrid graph
 
+Everyday setup and paste-ready prompts are in [UIPATH_GUIDE.md](UIPATH_GUIDE.md).
+
 Workflow Foundation XAML is indexed as a workflow-and-code graph, not as generic XML.
 
 ## What gets indexed
