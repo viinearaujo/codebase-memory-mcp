@@ -350,8 +350,279 @@ static char *tool_usages(sqlite3 *db, const char *project, const char *args) {
     return finish(&sb, 0);
 }
 
+enum { UIP_EDGE_CAP = 100, UIP_PATH_CAP = 512 };
+
+typedef char uip_path[UIP_PATH_CAP];
+
+typedef struct {
+    char *from;
+    char *to;
+    char *props;
+} uip_seen;
+
+static const char *invoke_resolution(const char *props) {
+    if (!props) {
+        return "literal";
+    }
+    if (strstr(props, "dynamic")) {
+        return "dynamic";
+    }
+    if (strstr(props, "folded")) {
+        return "folded";
+    }
+    if (strstr(props, "literal_ci")) {
+        return "literal_ci";
+    }
+    if (strstr(props, "pattern")) {
+        return "pattern";
+    }
+    return "literal";
+}
+
+static const char *invoke_direction(const char *raw) {
+    if (raw && strcmp(raw, "inbound") == 0) {
+        return "inbound";
+    }
+    if (raw && strcmp(raw, "both") == 0) {
+        return "both";
+    }
+    return "outbound";
+}
+
+/* DynamicTarget qualified names are hashes. The path lives on the node name. */
+static const char *invoke_target_text(const char *label, const char *qn, const char *name) {
+    if (label && name && name[0] && strcmp(label, "DynamicTarget") == 0) {
+        return name;
+    }
+    return qn ? qn : "";
+}
+
+static void emit_invoke_row(cbm_sb_t *body, const char *from, const char *to, const char *props) {
+    cbm_tree_row_begin(body);
+    cbm_tree_cell_str(body, from, true);
+    cbm_tree_cell_str(body, to, false);
+    cbm_tree_cell_str(body, invoke_resolution(props), false);
+    cbm_tree_row_end(body);
+}
+
+static int uip_seen_has(const uip_seen *seen, int n, const char *from, const char *to,
+                        const char *props) {
+    for (int i = 0; i < n; i++) {
+        if (strcmp(seen[i].from, from) == 0 && strcmp(seen[i].to, to) == 0 &&
+            strcmp(seen[i].props, props) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int uip_seen_add(uip_seen *seen, int n, const char *from, const char *to,
+                        const char *props) {
+    char *from_copy = strdup(from ? from : "");
+    char *to_copy = strdup(to ? to : "");
+    char *props_copy = strdup(props ? props : "");
+    if (!from_copy || !to_copy || !props_copy) {
+        free(from_copy);
+        free(to_copy);
+        free(props_copy);
+        return 0;
+    }
+    seen[n].from = from_copy;
+    seen[n].to = to_copy;
+    seen[n].props = props_copy;
+    return 1;
+}
+
+static void uip_seen_free(uip_seen *seen, int n) {
+    if (!seen) {
+        return;
+    }
+    for (int i = 0; i < n; i++) {
+        free(seen[i].from);
+        free(seen[i].to);
+        free(seen[i].props);
+    }
+    free(seen);
+}
+
+static int uip_path_has(const uip_path *paths, int n, const char *path) {
+    for (int i = 0; i < n; i++) {
+        if (strcmp(paths[i], path) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void uip_queue_file(uip_path *next, int *nnext, uip_path *seen_files, int *nseen_files,
+                           const char *path) {
+    if (!path || !path[0] || uip_path_has(seen_files, *nseen_files, path)) {
+        return;
+    }
+    if (*nseen_files >= UIP_EDGE_CAP + 1 || *nnext >= UIP_EDGE_CAP) {
+        return;
+    }
+    snprintf(seen_files[*nseen_files], UIP_PATH_CAP, "%s", path);
+    (*nseen_files)++;
+    snprintf(next[*nnext], UIP_PATH_CAP, "%s", path);
+    (*nnext)++;
+}
+
+static const char *invoke_hop_sql(int outbound) {
+    if (outbound) {
+        return "SELECT s.qualified_name, t.qualified_name, e.properties, t.label, t.name, "
+               "t.file_path, s.file_path FROM edges e "
+               "JOIN nodes s ON s.id=e.source_id JOIN nodes t ON t.id=e.target_id "
+               "WHERE s.project=?1 AND s.label='Activity' AND e.type='INVOKES_WORKFLOW' "
+               "AND (s.file_path=?2 OR s.qualified_name=?2) "
+               "ORDER BY s.qualified_name, t.qualified_name, e.id LIMIT ?3 OFFSET ?4";
+    }
+    return "SELECT s.qualified_name, t.qualified_name, e.properties, t.label, t.name, "
+           "t.file_path, s.file_path FROM edges e "
+           "JOIN nodes s ON s.id=e.source_id JOIN nodes t ON t.id=e.target_id "
+           "WHERE s.project=?1 AND s.label='Activity' AND t.label='Workflow' "
+           "AND e.type='INVOKES_WORKFLOW' AND (t.file_path=?2 OR t.qualified_name=?2) "
+           "ORDER BY s.qualified_name, t.qualified_name, e.id LIMIT ?3 OFFSET ?4";
+}
+
+/* One frontier file. LIMIT is one past the edges still allowed, so a full page
+ * proves another row exists. Duplicates do not count toward the cap. */
+static void invoke_expand(sqlite3_stmt *st, const char *project, const char *file, int outbound,
+                          int follow, uip_seen *seen, cbm_sb_t *body, int *rows, int *truncated,
+                          uip_path *next, int *nnext, uip_path *seen_files, int *nseen_files) {
+    int offset = 0;
+    while (!*truncated) {
+        int limit = UIP_EDGE_CAP - *rows + 1;
+        if (limit < 1) {
+            *truncated = 1;
+            return;
+        }
+        sqlite3_reset(st);
+        sqlite3_clear_bindings(st);
+        sqlite3_bind_text(st, 1, project, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(st, 2, file, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(st, 3, limit);
+        sqlite3_bind_int(st, 4, offset);
+        int fetched = 0;
+        int step;
+        while ((step = sqlite3_step(st)) == SQLITE_ROW) {
+            fetched++;
+            const char *from = coltxt(st, 0);
+            const char *to_qn = coltxt(st, 1);
+            const char *props = coltxt(st, 2);
+            const char *label = coltxt(st, 3);
+            const char *name = coltxt(st, 4);
+            const char *target_file = coltxt(st, 5);
+            const char *source_file = coltxt(st, 6);
+            if (uip_seen_has(seen, *rows, from, to_qn, props)) {
+                continue;
+            }
+            if (*rows >= UIP_EDGE_CAP) {
+                *truncated = 1;
+                return;
+            }
+            if (!uip_seen_add(seen, *rows, from, to_qn, props)) {
+                return;
+            }
+            emit_invoke_row(body, from, invoke_target_text(label, to_qn, name), props);
+            (*rows)++;
+            if (!follow) {
+                continue;
+            }
+            if (outbound) {
+                if (strcmp(label, "Workflow") == 0) {
+                    uip_queue_file(next, nnext, seen_files, nseen_files, target_file);
+                }
+            } else {
+                uip_queue_file(next, nnext, seen_files, nseen_files, source_file);
+            }
+        }
+        if (step != SQLITE_DONE) {
+            return;
+        }
+        if (fetched < limit) {
+            return;
+        }
+        offset += fetched;
+    }
+}
+
+/* Outbound steps through Workflow file_path only. Inbound steps to the source
+ * activity file_path. `seen_files` stops cycles. `both` is two of these walks. */
+static void invoke_walk(sqlite3 *db, const char *project, const char *start, int depth,
+                        int outbound, uip_seen *seen, cbm_sb_t *body, int *rows, int *truncated) {
+    sqlite3_stmt *st = NULL;
+    if (sqlite3_prepare_v2(db, invoke_hop_sql(outbound), -1, &st, NULL) != SQLITE_OK) {
+        return;
+    }
+    uip_path *cur = calloc((size_t)UIP_EDGE_CAP, sizeof(uip_path));
+    uip_path *next = calloc((size_t)UIP_EDGE_CAP, sizeof(uip_path));
+    uip_path *seen_files = calloc((size_t)UIP_EDGE_CAP + 1, sizeof(uip_path));
+    if (!cur || !next || !seen_files) {
+        free(cur);
+        free(next);
+        free(seen_files);
+        sqlite3_finalize(st);
+        return;
+    }
+    /* Hop 0 binds `start` itself. Later hops bind file_path copies. The start
+     * file is already visited so a cycle back to it does not expand again. */
+    int nseen_files = 0;
+    if (start && start[0]) {
+        snprintf(seen_files[0], UIP_PATH_CAP, "%s", start);
+        nseen_files = 1;
+    }
+    int ncur = 0;
+    for (int hop = 0; hop < depth && !*truncated; hop++) {
+        int nnext = 0;
+        int follow = hop + 1 < depth;
+        int nfiles = hop == 0 ? 1 : ncur;
+        for (int i = 0; i < nfiles && !*truncated; i++) {
+            const char *file = hop == 0 ? start : cur[i];
+            invoke_expand(st, project, file, outbound, follow, seen, body, rows, truncated, next,
+                          &nnext, seen_files, &nseen_files);
+        }
+        if (nnext > 0) {
+            memcpy(cur, next, (size_t)nnext * sizeof(uip_path));
+        }
+        ncur = nnext;
+    }
+    free(cur);
+    free(next);
+    free(seen_files);
+    sqlite3_finalize(st);
+}
+
+static void invoke_project_wide(sqlite3 *db, const char *project, cbm_sb_t *body, int *rows,
+                                int *truncated) {
+    sqlite3_stmt *st = NULL;
+    const char *sql = "SELECT s.qualified_name, t.qualified_name, e.properties, t.label, t.name "
+                      "FROM edges e "
+                      "JOIN nodes s ON s.id=e.source_id JOIN nodes t ON t.id=e.target_id "
+                      "WHERE s.project=?1 AND e.type='INVOKES_WORKFLOW' "
+                      "ORDER BY s.qualified_name, t.qualified_name LIMIT ?2";
+    if (sqlite3_prepare_v2(db, sql, -1, &st, NULL) != SQLITE_OK) {
+        return;
+    }
+    sqlite3_bind_text(st, 1, project, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, 2, UIP_EDGE_CAP + 1);
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        if (*rows >= UIP_EDGE_CAP) {
+            *truncated = 1;
+            break;
+        }
+        emit_invoke_row(body, coltxt(st, 0),
+                        invoke_target_text(coltxt(st, 3), coltxt(st, 1), coltxt(st, 4)),
+                        coltxt(st, 2));
+        (*rows)++;
+    }
+    sqlite3_finalize(st);
+}
+
 static char *tool_invoke_graph(sqlite3 *db, const char *project, const char *args) {
     char *wf = arg_str(args, "workflow");
+    char *dir_arg = arg_str(args, "direction");
+    const char *direction = invoke_direction(dir_arg);
     int depth = arg_int(args, "depth", 3);
     if (depth < 1) {
         depth = 1;
@@ -363,51 +634,39 @@ static char *tool_invoke_graph(sqlite3 *db, const char *project, const char *arg
     cbm_sb_init(&sb);
     cbm_tree_scalar_str(&sb, "project", project);
     cbm_tree_scalar_int(&sb, "depth", depth);
-    sqlite3_stmt *st = NULL;
-    const char *sql = "SELECT s.qualified_name, t.qualified_name, e.properties FROM edges e "
-                      "JOIN nodes s ON s.id=e.source_id JOIN nodes t ON t.id=e.target_id "
-                      "WHERE s.project=?1 AND e.type='INVOKES_WORKFLOW' "
-                      "AND (?2 IS NULL OR s.file_path=?2 OR s.qualified_name=?2) "
-                      "ORDER BY s.qualified_name, t.qualified_name LIMIT 100";
-    if (sqlite3_prepare_v2(db, sql, -1, &st, NULL) == SQLITE_OK) {
-        sqlite3_bind_text(st, 1, project, -1, SQLITE_TRANSIENT);
-        if (wf && wf[0]) {
-            sqlite3_bind_text(st, 2, wf, -1, SQLITE_TRANSIENT);
-        } else {
-            sqlite3_bind_null(st, 2);
-        }
-        cbm_sb_t body;
-        cbm_sb_init(&body);
-        int rows = 0;
-        while (sqlite3_step(st) == SQLITE_ROW) {
-            const char *props = coltxt(st, 2);
-            const char *res = "literal";
-            if (strstr(props, "dynamic")) {
-                res = "dynamic";
-            } else if (strstr(props, "folded")) {
-                res = "folded";
-            } else if (strstr(props, "literal_ci")) {
-                res = "literal_ci";
+    cbm_tree_scalar_str(&sb, "direction", direction);
+    cbm_sb_t body;
+    cbm_sb_init(&body);
+    int rows = 0;
+    int truncated = 0;
+    if (wf && wf[0]) {
+        uip_seen *seen = calloc((size_t)UIP_EDGE_CAP, sizeof(uip_seen));
+        if (seen) {
+            if (strcmp(direction, "inbound") != 0) {
+                invoke_walk(db, project, wf, depth, 1, seen, &body, &rows, &truncated);
             }
-            cbm_tree_row_begin(&body);
-            cbm_tree_cell_str(&body, coltxt(st, 0), true);
-            cbm_tree_cell_str(&body, coltxt(st, 1), false);
-            cbm_tree_cell_str(&body, res, false);
-            cbm_tree_row_end(&body);
-            rows++;
+            if (!truncated && strcmp(direction, "outbound") != 0) {
+                invoke_walk(db, project, wf, depth, 0, seen, &body, &rows, &truncated);
+            }
+            uip_seen_free(seen, rows);
         }
-        sqlite3_finalize(st);
-        cbm_tree_scalar_int(&sb, "edges", rows);
-        if (rows) {
-            static const char *cols[] = {"from", "to", "resolution"};
-            cbm_tree_table_header(&sb, "invokes", rows, cols, 3);
-            cbm_sb_append(&sb, body.buf ? body.buf : "");
-        }
-        cbm_sb_free(&body);
+    } else {
+        invoke_project_wide(db, project, &body, &rows, &truncated);
     }
+    cbm_tree_scalar_int(&sb, "edges", rows);
+    if (rows) {
+        static const char *cols[] = {"from", "to", "resolution"};
+        cbm_tree_table_header(&sb, "invokes", rows, cols, 3);
+        cbm_sb_append(&sb, body.buf ? body.buf : "");
+    }
+    cbm_sb_free(&body);
     int dyn = count_label(db, project, "DynamicTarget");
     cbm_tree_scalar_str(&sb, "completeness", dyn > 0 ? "lower_bound" : "exact");
+    if (truncated) {
+        cbm_tree_scalar_bool(&sb, "truncated", true);
+    }
     free(wf);
+    free(dir_arg);
     return finish(&sb, 0);
 }
 
@@ -480,6 +739,7 @@ static char *tool_lint(sqlite3 *db, const char *project, const char *args) {
     cbm_sb_t body;
     cbm_sb_init(&body);
     int rows = 0;
+    const char *completeness = "exact";
     if (sqlite3_prepare_v2(db,
                            "SELECT file_path, name, properties FROM nodes WHERE project=?1 AND "
                            "label='Selector' AND instr(properties,'\"risk_score\":0')=0 "
@@ -517,15 +777,22 @@ static char *tool_lint(sqlite3 *db, const char *project, const char *args) {
     if (sqlite3_prepare_v2(db,
                            "SELECT qualified_name FROM nodes WHERE project=?1 AND "
                            "label='Workflow' AND CAST(json_extract(properties,'$.activity_count') "
-                           "AS INTEGER) > 30 LIMIT 20",
+                           "AS INTEGER) > 30 ORDER BY CAST(json_extract(properties,"
+                           "'$.activity_count') AS INTEGER) DESC LIMIT 21",
                            -1, &st, NULL) == SQLITE_OK) {
         sqlite3_bind_text(st, 1, project, -1, SQLITE_TRANSIENT);
+        int large_n = 0;
         while (sqlite3_step(st) == SQLITE_ROW) {
+            if (large_n >= 20) {
+                completeness = "truncated";
+                break;
+            }
             cbm_tree_row_begin(&body);
             cbm_tree_cell_str(&body, "refactor.large_workflow", true);
             cbm_tree_cell_str(&body, coltxt(st, 0), false);
             cbm_tree_cell_str(&body, "activity_count>30", false);
             cbm_tree_row_end(&body);
+            large_n++;
             rows++;
         }
         sqlite3_finalize(st);
@@ -545,6 +812,43 @@ static char *tool_lint(sqlite3 *db, const char *project, const char *args) {
         }
         sqlite3_finalize(st);
     }
+    if (sqlite3_prepare_v2(db,
+                           "SELECT name FROM nodes WHERE project=?1 AND label='DynamicTarget' "
+                           "AND (instr(name,'.xaml')>0 OR instr(name,'.cs')>0) "
+                           "ORDER BY name LIMIT 40",
+                           -1, &st, NULL) == SQLITE_OK) {
+        sqlite3_bind_text(st, 1, project, -1, SQLITE_TRANSIENT);
+        while (sqlite3_step(st) == SQLITE_ROW) {
+            cbm_tree_row_begin(&body);
+            cbm_tree_cell_str(&body, "invoke.unresolved", true);
+            cbm_tree_cell_str(&body, coltxt(st, 0), false);
+            cbm_tree_cell_str(&body, "unresolved", false);
+            cbm_tree_row_end(&body);
+            rows++;
+        }
+        sqlite3_finalize(st);
+    }
+    if (sqlite3_prepare_v2(db,
+                           "SELECT s.file_path, t.file_path FROM edges e "
+                           "JOIN nodes s ON s.id=e.source_id JOIN nodes t ON t.id=e.target_id "
+                           "WHERE s.project=?1 AND s.label='Activity' "
+                           "AND e.type='INVOKES_WORKFLOW' "
+                           "AND instr(e.properties,'\"candidate\":true')>0 "
+                           "AND instr(s.properties, t.file_path)=0 "
+                           "AND (instr(s.properties,'/')>0 OR instr(s.properties, char(92))>0) "
+                           "ORDER BY s.file_path, t.file_path LIMIT 40",
+                           -1, &st, NULL) == SQLITE_OK) {
+        sqlite3_bind_text(st, 1, project, -1, SQLITE_TRANSIENT);
+        while (sqlite3_step(st) == SQLITE_ROW) {
+            cbm_tree_row_begin(&body);
+            cbm_tree_cell_str(&body, "invoke.candidate", true);
+            cbm_tree_cell_str(&body, coltxt(st, 0), false);
+            cbm_tree_cell_str(&body, coltxt(st, 1), false);
+            cbm_tree_row_end(&body);
+            rows++;
+        }
+        sqlite3_finalize(st);
+    }
     cbm_tree_scalar_int(&sb, "findings", rows);
     if (rows) {
         static const char *cols[] = {"rule", "file", "evidence"};
@@ -552,7 +856,7 @@ static char *tool_lint(sqlite3 *db, const char *project, const char *args) {
         cbm_sb_append(&sb, body.buf ? body.buf : "");
     }
     cbm_sb_free(&body);
-    cbm_tree_scalar_str(&sb, "completeness", "exact");
+    cbm_tree_scalar_str(&sb, "completeness", completeness);
     return finish(&sb, 0);
 }
 

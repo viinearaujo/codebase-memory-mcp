@@ -1349,6 +1349,13 @@ static int run_extract_resolve(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *changed
         }
         cbm_clock_gettime(CLOCK_MONOTONIC, &t);
         (void)cbm_pipeline_pass_uipath(ctx, changed_files, ci);
+        /* UiPath materializes relationship nodes on the main buffer after the
+         * registry watermark publish. Advance the shared allocator before
+         * resolve workers resume so their IDs cannot collide with those nodes. */
+        int64_t uipath_next_id = cbm_gbuf_next_id(ctx->gbuf);
+        if (uipath_next_id > atomic_load(&shared_ids)) {
+            atomic_store(&shared_ids, uipath_next_id);
+        }
         rc = cbm_parallel_resolve(ctx, changed_files, ci, cache, &shared_ids, worker_count,
                                   all_defs, all_def_count, closure ? closure->def_modules : NULL,
                                   module_def_index, registries_arg);
@@ -1360,7 +1367,12 @@ static int run_extract_resolve(cbm_pipeline_ctx_t *ctx, cbm_file_info_t *changed
         }
         cbm_log_info("pass.timing", "pass", "incr_resolve", "elapsed_ms",
                      itoa_buf((int)elapsed_ms(t)));
-        cbm_gbuf_set_next_id(ctx->gbuf, atomic_load(&shared_ids));
+        int64_t shared_next_id = atomic_load(&shared_ids);
+        int64_t buffer_next_id = cbm_gbuf_next_id(ctx->gbuf);
+        if (buffer_next_id > shared_next_id) {
+            shared_next_id = buffer_next_id;
+        }
+        cbm_gbuf_set_next_id(ctx->gbuf, shared_next_id);
         free_incremental_result_cache(cache, ci);
         return rc;
     } else {

@@ -1442,19 +1442,24 @@ static void link_all(cbm_gbuf_t *gb) {
                     }
                 }
                 if (!target) {
-                    const char *base = base_name(resolved);
-                    int hits = 0;
-                    up_n *cand = NULL;
-                    for (int w = 0; w < nwf; w++) {
-                        if (strcmp(base_name(wfs[w].qn), base) == 0) {
-                            hits++;
-                            cand = &wfs[w];
+                    char raw_norm[512];
+                    snprintf(raw_norm, sizeof(raw_norm), "%s", raw);
+                    norm_slash(raw_norm);
+                    if (strchr(raw_norm, '/') == NULL) {
+                        const char *base = base_name(resolved);
+                        int hits = 0;
+                        up_n *cand = NULL;
+                        for (int w = 0; w < nwf; w++) {
+                            if (strcmp(base_name(wfs[w].qn), base) == 0) {
+                                hits++;
+                                cand = &wfs[w];
+                            }
                         }
-                    }
-                    if (hits == 1 && strchr(raw, '(') == NULL) {
-                        target = cand;
-                        how = "pattern";
-                        conf = 0.5;
+                        if (hits == 1 && strchr(raw, '(') == NULL) {
+                            target = cand;
+                            how = "pattern";
+                            conf = 0.5;
+                        }
                     }
                 }
                 if (target && escaped && conf > 0.7) {
@@ -1711,8 +1716,8 @@ static void link_all(cbm_gbuf_t *gb) {
                             }
                         }
                     }
-                    const char *status = arg ? "ok" : "extra";
                     if (arg) {
+                        const char *status = "ok";
                         yyjson_doc *ad = NULL;
                         yyjson_val *ao = props_of(&ad, arg->props);
                         const char *adir = js(ao, "direction");
@@ -1730,14 +1735,6 @@ static void link_all(cbm_gbuf_t *gb) {
                         if (ad) {
                             yyjson_doc_free(ad);
                         }
-                    } else {
-                        int64_t dyn = dyn_target(gb, pq, nm);
-                        char ep[240];
-                        snprintf(ep, sizeof(ep),
-                                 "{\"strategy\":\"uipath_binding\",\"direction\":\"%s\","
-                                 "\"status\":\"extra\",\"line\":%d}",
-                                 dir, acts[i].line);
-                        cbm_gbuf_insert_edge(gb, acts[i].id, dyn, "PASSES_ARGUMENT", ep);
                     }
                 }
                 /* missing In args */
