@@ -1,0 +1,25 @@
+---
+description: This fork is structural recall for UiPath projects; read docs/FORK.md
+alwaysApply: true
+---
+
+# Fork job
+
+Read [docs/FORK.md](../../docs/FORK.md) before changing how this fork treats UiPath. The rationale lives there. This rule only keeps the boundary.
+
+This fork is structural recall for UiPath projects: overview, outline, who uses a name, invoke chain, impact, and lint. The model spends tokens on the answer, not on walking XAML.
+
+The UiPath skills and the `uip` CLI author and run. Do not port UiPathEngineeringMCP.
+
+XAML-majority: at least 75% of the automation stays in `.xaml`. Coded workflows are the exception. Do not add findings that tell the agent to move business logic into C#.
+
+Decisions stay in the project kit's `docs/adr`, not in `manage_adr`.
+
+```text
+# Every session in this repo:
+Read docs/FORK.md. Recall structure from the graph.
+# Author and run:
+UiPath skills and `uip`. Decisions go in the project kit's docs/adr.
+# Leave parked:
+UiPathEngineeringMCP. No finding that moves business logic into C#.
+```
