@@ -135,7 +135,9 @@ void cbm_lockfile_close(int fd);
 /* Open a file by UTF-8 path.
  * On Windows, converts to wide-char and calls _wfopen so paths with
  * non-ASCII characters (accents, CJK, etc.) are handled correctly.
- * On POSIX, delegates to fopen. mode must be an ASCII string. */
+ * A C11 'x' (exclusive create) in mode is _O_CREAT|_O_EXCL, because this
+ * CRT's _wfopen rejects that letter. On POSIX, delegates to fopen.
+ * mode must be an ASCII string. */
 FILE *cbm_fopen(const char *path, const char *mode);
 
 /* Execute a command without shell interpretation.

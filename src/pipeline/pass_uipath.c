@@ -676,12 +676,63 @@ static void add_coded_activity(cbm_gbuf_t *gb, const char *wf, const char *proje
     up_upsert(gb, "Activity", type_name, qn, wf, line, line, props);
 }
 
+static int ident_char(unsigned char c) {
+    return isalnum(c) || c == '_';
+}
+
+static int has_attr_token(const char *src, const char *name) {
+    char open[80];
+    char call[80];
+    snprintf(open, sizeof(open), "[%s]", name);
+    snprintf(call, sizeof(call), "[%s(", name);
+    return (strstr(src, open) != NULL) || (strstr(src, call) != NULL);
+}
+
+/* A class base spelled CodedWorkflow, including a qualified base. A using
+ * UiPath.CodedWorkflows import and a longer type such as
+ * ICodedWorkflowsServiceContainer are not bases. */
+static int has_coded_workflow_base(const char *src) {
+    const char *p = src;
+    const char *needle = "CodedWorkflow";
+    size_t n = strlen(needle);
+    while ((p = strstr(p, needle)) != NULL) {
+        int bounded = (p == src || !ident_char((unsigned char)p[-1])) && !ident_char((unsigned char)p[n]);
+        if (bounded) {
+            const char *b = p;
+            int saw_colon = 0;
+            while (b > src) {
+                unsigned char c = (unsigned char)b[-1];
+                if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '.' || c == ',' ||
+                    c == ':' || ident_char(c)) {
+                    if (c == ':') {
+                        saw_colon = 1;
+                    }
+                    b--;
+                    continue;
+                }
+                break;
+            }
+            if (saw_colon) {
+                return 1;
+            }
+        }
+        p += n;
+    }
+    return 0;
+}
+
+static int coded_workflow_source(const char *src) {
+    if (!src) {
+        return 0;
+    }
+    return has_attr_token(src, "Workflow") || has_attr_token(src, "TestCase") ||
+           has_coded_workflow_base(src);
+}
+
 static void scan_coded(cbm_gbuf_t *gb, cbm_pipeline_t *pipeline, const char *rel, const char *src,
                        up_proj *proj) {
     (void)pipeline;
-    int marked =
-        strstr(src, "[Workflow]") || strstr(src, "[TestCase]") || strstr(src, "CodedWorkflow");
-    if (!marked) {
+    if (!coded_workflow_source(src)) {
         return;
     }
     scan_ud ud;
@@ -690,7 +741,7 @@ static void scan_coded(cbm_gbuf_t *gb, cbm_pipeline_t *pipeline, const char *rel
     ud.wf = rel;
     ud.project_qn = proj ? proj->qn : "";
     ud.expr_proj = "CSharp";
-    ud.is_test = strstr(src, "[TestCase]") != NULL || (proj && list_has(proj->tests, rel));
+    ud.is_test = has_attr_token(src, "TestCase") || (proj && list_has(proj->tests, rel));
     ud.is_entry = proj && list_has(proj->entries, rel);
     ud.is_private = proj && list_has(proj->privates, rel);
     snprintf(ud.root_kind, sizeof(ud.root_kind), "Coded");
@@ -885,6 +936,7 @@ typedef struct {
     char *file;
     char *props;
     int line;
+    int end_line;
 } up_n;
 
 static void free_nodes(up_n *a, int n) {
@@ -915,6 +967,7 @@ static up_n *copy_label(cbm_gbuf_t *gb, const char *label, int *out_n) {
         a[i].file = strdup(nodes[i]->file_path ? nodes[i]->file_path : "");
         a[i].props = strdup(nodes[i]->properties_json ? nodes[i]->properties_json : "{}");
         a[i].line = nodes[i]->start_line;
+        a[i].end_line = nodes[i]->end_line;
     }
     *out_n = n;
     return a;
@@ -1169,6 +1222,41 @@ static const char *config_value(up_n *keys, int nkeys, up_n *files, int nfiles, 
     return NULL;
 }
 
+static int expr_name_is_cs(const char *lang) {
+    return lang && (strcmp(lang, "CSharp") == 0 || strcmp(lang, "cs") == 0 || strcmp(lang, "C#") == 0);
+}
+
+/* Untagged invoke and resource expressions follow the workflow language, then
+ * the project expressionLanguage. A bracket is not itself a C# signal. */
+static int workflow_fold_cs(const up_n *wf, up_n *projs, int nproj, const char *pq) {
+    if (wf && wf->props) {
+        const char *key = "\"expr_lang\":\"";
+        const char *hit = strstr(wf->props, key);
+        if (hit) {
+            hit += strlen(key);
+            if (strncmp(hit, "CSharp\"", 7) == 0 || strncmp(hit, "cs\"", 3) == 0) {
+                return 1;
+            }
+            if (strncmp(hit, "VisualBasic\"", 12) == 0 || strncmp(hit, "vb\"", 3) == 0) {
+                return 0;
+            }
+        }
+    }
+    for (int p = 0; p < nproj; p++) {
+        if (!pq || strcmp(projs[p].qn, pq) != 0) {
+            continue;
+        }
+        yyjson_doc *d = NULL;
+        yyjson_val *o = props_of(&d, projs[p].props);
+        int cs = expr_name_is_cs(js(o, "expression_language"));
+        if (d) {
+            yyjson_doc_free(d);
+        }
+        return cs;
+    }
+    return 0;
+}
+
 static void link_all(cbm_gbuf_t *gb) {
     int nwf = 0, nact = 0, narg = 0, nvar = 0, nkey = 0, nfile = 0, ncls = 0, nmeth = 0, nproj = 0;
     up_n *wfs = copy_label(gb, "Workflow", &nwf);
@@ -1182,8 +1270,11 @@ static void link_all(cbm_gbuf_t *gb) {
     up_n *projs = copy_label(gb, "UiPathProject", &nproj);
     assign_members(wfs, nwf);
     for (int i = 0; i < nwf; i++) {
-        /* persist member onto the node */
-        up_upsert(gb, "Workflow", wfs[i].name, wfs[i].qn, wfs[i].file, 1, 1, wfs[i].props);
+        /* persist member onto the node without collapsing the span finish_workflow_node stored */
+        int start_line = wfs[i].line > 0 ? wfs[i].line : 1;
+        int end_line = wfs[i].end_line > 0 ? wfs[i].end_line : start_line;
+        up_upsert(gb, "Workflow", wfs[i].name, wfs[i].qn, wfs[i].file, start_line, end_line,
+                  wfs[i].props);
         yyjson_doc *d = NULL;
         yyjson_val *o = props_of(&d, wfs[i].props);
         const char *pq = js(o, "project_qn");
@@ -1394,6 +1485,7 @@ static void link_all(cbm_gbuf_t *gb) {
             }
         }
         char *save = NULL;
+        int fold_cs = workflow_fold_cs(wf, projs, nproj, pq);
         for (char *line = strtok_r(copy, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
             char kind[32] = "";
             char f1[300] = "", f2[300] = "", f3[400] = "", f4[400] = "";
@@ -1408,7 +1500,8 @@ static void link_all(cbm_gbuf_t *gb) {
                 double conf = 1.0;
                 if (strcmp(kind, "invoke_expr") == 0 || strchr(raw, '(')) {
                     uipath_expr_facts ef;
-                    uipath_expr_analyze(raw, 0, vnames, vtypes, nv, anames, atypes, na, 0, &ef);
+                    uipath_expr_analyze(raw, fold_cs, vnames, vtypes, nv, anames, atypes, na, 0,
+                                        &ef);
                     if (ef.nconfig > 0) {
                         const char *val =
                             config_value(keys, nkey, files, nfile, pq, ef.config_keys[0]);
@@ -1626,7 +1719,8 @@ static void link_all(cbm_gbuf_t *gb) {
                 snprintf(literal, sizeof(literal), "%s", rname);
                 if (rname[0] == '[' || strchr(rname, '(')) {
                     uipath_expr_facts ef;
-                    uipath_expr_analyze(rname, 0, vnames, vtypes, nv, anames, atypes, na, 0, &ef);
+                    uipath_expr_analyze(rname, fold_cs, vnames, vtypes, nv, anames, atypes, na, 0,
+                                        &ef);
                     via = "config";
                     if (ef.nconfig) {
                         snprintf(literal, sizeof(literal), "%s", ef.config_keys[0]);
@@ -2000,7 +2094,7 @@ static void scan_xaml_file(cbm_pipeline_ctx_t *ctx, const char *rel, const char 
     /* placeholder so the QN exists even if the scanner emits nothing */
     up_upsert(ctx->gbuf, "Workflow", base_name(rel), rel, rel, 1, 1,
               "{\"domain\":\"uipath\",\"kind\":\"xaml\",\"strategy\":\"uipath_structure\"}");
-    uipath_xaml_scan(src, len, on_xaml_item, &ud);
+    uipath_xaml_scan(src, len, on_xaml_item, &ud, ud.expr_proj);
     if (trunc) {
         ud.parse_status = 2;
     }

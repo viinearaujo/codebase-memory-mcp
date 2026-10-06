@@ -64,8 +64,12 @@ typedef struct {
 
 typedef void (*uipath_xaml_emit_fn)(void *ud, const uipath_xaml_item *item);
 
-/* Always returns 0. Malformed input yields partial items and parse_status. */
-int uipath_xaml_scan(const char *src, size_t len, uipath_xaml_emit_fn emit, void *ud);
+/* Always returns 0. Malformed input yields partial items and parse_status.
+ * expr_language is the project expressionLanguage (CSharp or VisualBasic).
+ * Bracket attributes follow that setting. CSharpValue and CSharpReference
+ * still record C# on their own. */
+int uipath_xaml_scan(const char *src, size_t len, uipath_xaml_emit_fn emit, void *ud,
+                     const char *expr_language);
 
 /* Index one config file (json, xlsx, or .config) into ConfigFile/ConfigKey nodes.
  * is_loaded is left false; the linker flips it after load-site detection. */

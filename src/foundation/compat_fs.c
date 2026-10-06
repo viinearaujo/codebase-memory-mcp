@@ -444,10 +444,95 @@ int cbm_pclose(FILE *f) {
     return got ? (int)code : -1;
 }
 
+/* C11 mode letter 'x' is exclusive create (O_EXCL). This CRT's _wfopen
+ * rejects that letter with EINVAL, so translate it to _wsopen(_O_CREAT|
+ * _O_EXCL) and wrap the descriptor. Callers keep failing when the file
+ * already exists. Modes without 'x' stay on _wfopen. */
+static bool cbm_fopen_exclusive_open_flags(const char *mode, char *plain, size_t plain_cap,
+                                           int *flags_out) {
+    if (!mode || !plain || plain_cap < 2 || !flags_out) {
+        return false;
+    }
+    bool exclusive = false;
+    bool write = false;
+    bool append = false;
+    bool update = false;
+    bool binary = false;
+    size_t n = 0;
+    for (const char *p = mode; *p; p++) {
+        if (*p == 'x') {
+            exclusive = true;
+            continue;
+        }
+        if (n + 1 >= plain_cap) {
+            return false;
+        }
+        plain[n++] = *p;
+        switch (*p) {
+        case 'w':
+            write = true;
+            break;
+        case 'a':
+            append = true;
+            break;
+        case '+':
+            update = true;
+            break;
+        case 'b':
+            binary = true;
+            break;
+        default:
+            break;
+        }
+    }
+    plain[n] = '\0';
+    /* 'x' only creates. A read-only mode, or both 'w' and 'a', is not a
+     * creating exclusive open — refuse it instead of dropping O_EXCL. */
+    if (!exclusive || write == append) {
+        return false;
+    }
+    int flags = _O_CREAT | _O_EXCL;
+    flags |= binary ? _O_BINARY : _O_TEXT;
+    flags |= update ? _O_RDWR : _O_WRONLY;
+    if (append) {
+        flags |= _O_APPEND;
+    }
+    *flags_out = flags;
+    return true;
+}
+
 FILE *cbm_fopen(const char *path, const char *mode) {
     wchar_t *wpath = cbm_path_to_wide(path);
     if (!wpath) {
         return NULL;
+    }
+    char plain_mode[16];
+    int exclusive_flags = 0;
+    if (mode && strchr(mode, 'x')) {
+        if (!cbm_fopen_exclusive_open_flags(mode, plain_mode, sizeof(plain_mode),
+                                            &exclusive_flags)) {
+            free(wpath);
+            errno = EINVAL;
+            return NULL;
+        }
+        /* _SH_DENYNO matches _wfopen: the exclusive part is O_EXCL, not a
+         * share-mode lock. The stage sidecar lock is a separate file. */
+        int fd = _wsopen(wpath, exclusive_flags, _SH_DENYNO, _S_IREAD | _S_IWRITE);
+        if (fd < 0) {
+            free(wpath);
+            return NULL;
+        }
+        FILE *f = _fdopen(fd, plain_mode);
+        if (!f) {
+            int saved = errno;
+            _close(fd);
+            (void)_wunlink(wpath);
+            free(wpath);
+            errno = saved != 0 ? saved : EINVAL;
+            return NULL;
+        }
+        free(wpath);
+        return f;
     }
     wchar_t *wmode = cbm_utf8_to_wide(mode);
     if (!wmode) {

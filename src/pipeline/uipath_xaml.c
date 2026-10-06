@@ -51,6 +51,7 @@ typedef struct {
     int property;
     int has_vars;
     int expr_cs;
+    int expr_vb;
 } xframe;
 
 typedef struct {
@@ -429,6 +430,8 @@ static void fill_item_from_frame(uipath_xaml_item *it, const xframe *f, uipath_x
     it->ordinal = f->ordinal;
 }
 
+static int blank_text(const char *s);
+
 static xframe *owning_activity(xframe *stack, int depth) {
     for (int i = depth - 1; i >= 0; i--) {
         if (stack[i].activity && !stack[i].collapsed && !stack[i].skip) {
@@ -438,7 +441,7 @@ static xframe *owning_activity(xframe *stack, int depth) {
     return NULL;
 }
 
-static void attach_expr_facts(xframe *stack, int depth) {
+static void attach_expr_facts(xframe *stack, int depth, int proj_cs) {
     xframe *f = &stack[depth];
     if (!f->expr_carrier) {
         return;
@@ -448,7 +451,15 @@ static void attach_expr_facts(xframe *stack, int depth) {
         return;
     }
     const char *text = f->expr_text;
-    const char *lang = f->expr_cs ? "cs" : "vb";
+    if (blank_text(text) && strcmp(f->slot, "WorkflowFileName") != 0) {
+        return;
+    }
+    const char *lang = "vb";
+    if (f->expr_cs) {
+        lang = "cs";
+    } else if (!f->expr_vb && proj_cs) {
+        lang = "cs";
+    }
     char line[1600];
     if (strcmp(f->slot, "WorkflowFileName") == 0) {
         int expr = text[0] == '[' || strchr(text, '(');
@@ -513,7 +524,38 @@ static void protected_by(xframe *stack, int depth, char *out, size_t cap) {
     }
 }
 
-static void note_resource_attrs(xframe *f, xattr *attrs, int nattr) {
+static int expr_language_is_cs(const char *lang) {
+    return lang && (strcmp(lang, "CSharp") == 0 || strcmp(lang, "cs") == 0 || strcmp(lang, "C#") == 0);
+}
+
+static int blank_text(const char *s) {
+    if (!s) {
+        return 1;
+    }
+    while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') {
+        s++;
+    }
+    return *s == '\0';
+}
+
+/* Reference-list AssemblyReference elements live in the WF activities
+ * namespace. A DisplayName of AssemblyReference on some other activity is
+ * not this type. */
+static int system_activities_assembly_ref(const xframe *f, const char *uri) {
+    if (!f || strcmp(f->local, "AssemblyReference") != 0) {
+        return 0;
+    }
+    if (strncmp(f->clr, "System.Activities", 17) == 0 &&
+        (f->clr[17] == '\0' || f->clr[17] == '.')) {
+        return 1;
+    }
+    if (strcmp(f->package, "System.Activities") == 0) {
+        return 1;
+    }
+    return uri && strstr(uri, "netfx/2009/xaml/activities") != NULL;
+}
+
+static void note_resource_attrs(xframe *f, xattr *attrs, int nattr, int proj_cs) {
     const char *wf = attr_get(attrs, nattr, "WorkflowFileName");
     if (wf && wf[0]) {
         char line[1400];
@@ -576,9 +618,10 @@ static void note_resource_attrs(xframe *f, xattr *attrs, int nattr) {
     }
     const char *to = attr_get(attrs, nattr, "To");
     const char *val = attr_get(attrs, nattr, "Value");
+    const char *lang = proj_cs ? "cs" : "vb";
     if (strcmp(f->local, "Assign") == 0 && (to || val)) {
         char line[1500];
-        snprintf(line, sizeof(line), "write\tvb\t%s\t%s", to ? to : "", val ? val : "");
+        snprintf(line, sizeof(line), "write\t%s\t%s\t%s", lang, to ? to : "", val ? val : "");
         fact_add(f, line);
     }
     for (int i = 0; i < nattr; i++) {
@@ -587,7 +630,7 @@ static void note_resource_attrs(xframe *f, xattr *attrs, int nattr) {
             continue;
         }
         char line[1500];
-        snprintf(line, sizeof(line), "expr\tvb\t%s", v);
+        snprintf(line, sizeof(line), "expr\t%s\t%s", lang, v);
         fact_add(f, line);
     }
     for (int i = 0; i < nattr; i++) {
@@ -622,10 +665,12 @@ static void structural_id(xframe *stack, int depth, char *out, size_t cap) {
     }
 }
 
-int uipath_xaml_scan(const char *src, size_t len, uipath_xaml_emit_fn emit, void *ud) {
+int uipath_xaml_scan(const char *src, size_t len, uipath_xaml_emit_fn emit, void *ud,
+                     const char *expr_language) {
     if (!src || !emit) {
         return 0;
     }
+    int proj_cs = expr_language_is_cs(expr_language);
     xsrc xs = {.s = src, .n = len, .i = 0, .line = 1, .trunc_attr = 0};
     if (len >= 3 && (unsigned char)src[0] == 0xEF && (unsigned char)src[1] == 0xBB &&
         (unsigned char)src[2] == 0xBF) {
@@ -729,10 +774,10 @@ int uipath_xaml_scan(const char *src, size_t len, uipath_xaml_emit_fn emit, void
                 } else if (f->expr_carrier && depth > 0) {
                     if (f->expr_cs) {
                         saw_cs = 1;
-                    } else if (f->expr_text[0]) {
+                    } else if (f->expr_vb) {
                         saw_vb = 1;
                     }
-                    attach_expr_facts(stack, depth);
+                    attach_expr_facts(stack, depth, proj_cs);
                 }
                 ns_count = ns_mark[depth];
                 depth--;
@@ -827,6 +872,18 @@ int uipath_xaml_scan(const char *src, size_t len, uipath_xaml_emit_fn emit, void
         if (parent_skip || is_designer) {
             f->skip = 1;
         }
+        /* Collection is a real root when it is the workflow activity. The
+         * same local name under TextExpression.NamespacesForImplementation
+         * or TextExpression.ReferencesForImplementation is metadata, and the
+         * namespaces list is what sticks root_kind when it comes first. */
+        if (strcmp(f->local, "Collection") == 0 &&
+            (strcmp(f->slot, "ReferencesForImplementation") == 0 ||
+             strcmp(f->slot, "NamespacesForImplementation") == 0)) {
+            f->skip = 1;
+        }
+        if (system_activities_assembly_ref(f, uri)) {
+            f->skip = 1;
+        }
         int prop = strchr(f->local, '.') != NULL;
         if (prop) {
             f->property = 1;
@@ -855,6 +912,7 @@ int uipath_xaml_scan(const char *src, size_t len, uipath_xaml_emit_fn emit, void
         } else if (expr_local(f->local)) {
             f->expr_carrier = 1;
             f->expr_cs = strncmp(f->local, "CSharp", 6) == 0;
+            f->expr_vb = strncmp(f->local, "VisualBasic", 11) == 0;
             if (strncmp(f->local, "Out", 3) == 0) {
                 snprintf(f->dir, sizeof(f->dir), "Out");
             } else if (strncmp(f->local, "InOut", 5) == 0) {
@@ -909,7 +967,7 @@ int uipath_xaml_scan(const char *src, size_t len, uipath_xaml_emit_fn emit, void
                         skel_used += strlen(f->local);
                         skeleton[skel_used] = '\0';
                     }
-                    note_resource_attrs(f, attrs, nattr);
+                    note_resource_attrs(f, attrs, nattr, proj_cs);
                 }
             } else if (activities >= XAML_ACT_MAX) {
                 parse_status = 2;
@@ -953,10 +1011,10 @@ int uipath_xaml_scan(const char *src, size_t len, uipath_xaml_emit_fn emit, void
             } else if (f->expr_carrier) {
                 if (f->expr_cs) {
                     saw_cs = 1;
-                } else if (f->expr_text[0]) {
+                } else if (f->expr_vb) {
                     saw_vb = 1;
                 }
-                attach_expr_facts(stack, depth);
+                attach_expr_facts(stack, depth, proj_cs);
             }
             ns_count = ns_mark[depth];
             depth--;
@@ -990,6 +1048,10 @@ int uipath_xaml_scan(const char *src, size_t len, uipath_xaml_emit_fn emit, void
     if (saw_vb && saw_cs) {
         snprintf(meta.expr_lang, sizeof(meta.expr_lang), "mixed");
     } else if (saw_cs) {
+        snprintf(meta.expr_lang, sizeof(meta.expr_lang), "cs");
+    } else if (saw_vb) {
+        snprintf(meta.expr_lang, sizeof(meta.expr_lang), "vb");
+    } else if (proj_cs) {
         snprintf(meta.expr_lang, sizeof(meta.expr_lang), "cs");
     } else {
         snprintf(meta.expr_lang, sizeof(meta.expr_lang), "vb");

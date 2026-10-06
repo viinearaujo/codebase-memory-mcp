@@ -192,6 +192,97 @@ static char *tool_outline(sqlite3 *db, const char *project, const char *args) {
     return finish(&sb, 0);
 }
 
+enum { UIP_FACT_CAP = 12 };
+
+static int activity_fact_kind(const char *line, char *kind, size_t cap) {
+    const char *tab = strchr(line, '\t');
+    size_t n = tab ? (size_t)(tab - line) : strlen(line);
+    if (n == 0 || n >= cap) {
+        return 0;
+    }
+    memcpy(kind, line, n);
+    kind[n] = '\0';
+    return strcmp(kind, "invoke") == 0 || strcmp(kind, "invoke_expr") == 0 ||
+           strcmp(kind, "load") == 0 || strcmp(kind, "write") == 0 || strcmp(kind, "asset") == 0 ||
+           strcmp(kind, "queue") == 0;
+}
+
+static void activity_fact_detail(const char *line, char *out, size_t cap) {
+    const char *tab = strchr(line, '\t');
+    const char *rest = tab ? tab + 1 : "";
+    size_t o = 0;
+    for (; *rest && o + 1 < cap; rest++) {
+        char c = *rest == '\t' ? ' ' : *rest;
+        if (c == '\n' || c == '\r') {
+            break;
+        }
+        out[o++] = c;
+    }
+    out[o] = '\0';
+}
+
+/* Invoke, load, write, asset, and queue lines already stored on the activity.
+ * Other fact kinds stay on the node. The cap keeps a large activity small. */
+static void emit_activity_facts(cbm_sb_t *sb, const char *props) {
+    if (!props || !props[0]) {
+        return;
+    }
+    yyjson_doc *doc = yyjson_read(props, strlen(props), 0);
+    if (!doc) {
+        return;
+    }
+    yyjson_val *facts = yyjson_obj_get(yyjson_doc_get_root(doc), "facts");
+    const char *text = yyjson_is_str(facts) ? yyjson_get_str(facts) : NULL;
+    char *copy = text ? strdup(text) : NULL;
+    yyjson_doc_free(doc);
+    if (!copy) {
+        return;
+    }
+    cbm_sb_t body;
+    cbm_sb_init(&body);
+    int rows = 0;
+    int capped = 0;
+    const char *p = copy;
+    while (*p) {
+        const char *nl = strchr(p, '\n');
+        size_t n = nl ? (size_t)(nl - p) : strlen(p);
+        char line[1600];
+        if (n >= sizeof(line)) {
+            n = sizeof(line) - 1;
+        }
+        memcpy(line, p, n);
+        line[n] = '\0';
+        char kind[32];
+        if (activity_fact_kind(line, kind, sizeof(kind))) {
+            if (rows >= UIP_FACT_CAP) {
+                capped = 1;
+                break;
+            }
+            char detail[500];
+            activity_fact_detail(line, detail, sizeof(detail));
+            cbm_tree_row_begin(&body);
+            cbm_tree_cell_str(&body, kind, true);
+            cbm_tree_cell_str(&body, detail, false);
+            cbm_tree_row_end(&body);
+            rows++;
+        }
+        if (!nl) {
+            break;
+        }
+        p = nl + 1;
+    }
+    free(copy);
+    if (rows) {
+        static const char *cols[] = {"kind", "detail"};
+        cbm_tree_table_header(sb, "facts", rows, cols, 2);
+        cbm_sb_append(sb, body.buf ? body.buf : "");
+    }
+    cbm_sb_free(&body);
+    if (capped) {
+        cbm_tree_scalar_bool(sb, "facts_capped", true);
+    }
+}
+
 static char *tool_activity(sqlite3 *db, const char *project, const char *args) {
     char *act = arg_str(args, "activity");
     if (!act || !act[0]) {
@@ -224,6 +315,7 @@ static char *tool_activity(sqlite3 *db, const char *project, const char *args) {
     const char *props = coltxt(st, 5);
     cbm_tree_scalar_str(&sb, "protected_by",
                         strstr(props, "\"protected_by\":\"\"") ? "" : "see properties");
+    emit_activity_facts(&sb, props);
     sqlite3_finalize(st);
     if (sqlite3_prepare_v2(db,
                            "SELECT e.type, t.label, t.name, t.qualified_name, e.properties "

@@ -206,6 +206,24 @@ Use this when checking a re-index. It was measured outside the graph.
 - Process calls `Main_DataConvert`, `PrepareDocketRobotSkills`, `ExtractCaseData`, `SearchCase`, and `ProcessRobotSkills`.
 - Known bad targets: `Processes\SearchFiling\SearchFiling.xaml` is missing. Four CSI paths `CSI Framework\String\GetCaseInfoFromCaseNumber.xaml` are stale. The in-repo file with that filename is `RPA Framework/String/GetCaseInfoFromCaseNumber.xaml`.
 
+## Re-index 2026-10-06
+
+Scratch cache `C:\Users\arauj\AppData\Local\cbm-odyssey-scratch-20261006b`, binary `build/prod-uipath/codebase-memory-mcp` from `scripts/build.sh BUILD_DIR=build/prod-uipath`, `--mode fast`, persistence false, `CBM_WORKERS=4`. The UiPath repo was not written. Stored nodes 3482, edges 10113, and `expected_edges` matched the store.
+
+- R1: 222 stored `INVOKES_WORKFLOW` edges. Main's InitAllSettings invoke is one of them. Depth 4 from `Main.xaml` reaches `Main_DataConvert`, `PrepareDocketRobotSkills`, `ExtractCaseData`, `SearchCase`, and `ProcessRobotSkills`, and the walk reports `truncated` at 100 edges.
+- R2: the four AnyDocketToObject facts `CSI Framework\String\GetCaseInfoFromCaseNumber.xaml` target a DynamicTarget. Five other invokes of the in-repo `RPA Framework/String/GetCaseInfoFromCaseNumber.xaml` use that path in the fact. `Processes\SearchFiling\SearchFiling.xaml` stays unresolved. Lint rows `invoke.unresolved` name both.
+- R3: lint lists AnyDocketToObject (241), `Framework/Process.xaml` (48), and `Processes/ProcessRobotSkills.xaml` (74). Fourteen workflows are over 30, under the cap of 20, so completeness `exact` is the uncapped result. A separate 21-workflow fixture reports `truncated` and 20 rows.
+- R4: depth 1 from Main stays in that file; depth 4 walks further, as above.
+- G1: two DynamicTargets, SearchFiling and the CSI path. No argument-name targets.
+- B1: the Collection that stuck `root_kind` is `TextExpression.NamespacesForImplementation`, which sits above the references list. Both metadata slots are skipped. Main is `StateMachine`, `Framework/RetryCurrentTransaction.xaml` is `Flowchart`, Process and ProcessRobotSkills are `Sequence`. A Collection outside those slots is still a root.
+- B2: no `AssemblyReference` activities. Main's outline starts at StateMachine "General Business Process", then Initialization.
+- B3: Main's workflow node is lines 1–1665.
+- B4: those workflows store `expr_lang` `CSharp`.
+- T1: `uipath_activity_details` for `Main.xaml#InvokeWorkflowFile_1` prints the InitAllSettings invoke and the `Data\Config.xlsx` load.
+- T2: 93 workflows, 92 XAML plus `RPA Framework/AddressParser.cs`. `ConnectionsFactory.cs` and `ConnectionsManager.cs` are not workflows.
+- G2: `IMPLEMENTED_BY` from AddressParser to the Method `Execute`.
+- RunWorkflow: AddressParser does not call it. A coded fixture's `RunWorkflow("Child.xaml")` and `RunWorkflow("Helper.cs")` are `INVOKES_WORKFLOW` edges from the UiPath scan, not a second writer.
+
 ## Checked, and not the cause
 
 - Per-activity facts are a 4096-byte buffer (`xframe.facts` in `src/pipeline/uipath_xaml.c`). `fact_add` stops when it is full. The CSI lines and the InitAllSettings invoke line were still on the activity facts. All 95 workflows are `parse_status` ok. No workflow was truncated.
